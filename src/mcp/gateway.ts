@@ -1,0 +1,442 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import {
+  CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+  type CallToolResult,
+  type GetPromptResult,
+  type ListPromptsResult,
+  type ListResourcesResult,
+  type ListToolsResult,
+  type ReadResourceResult,
+} from "@modelcontextprotocol/sdk/types.js";
+import type { FederationConfig, McpServerConfig, MethodControls } from "../config/types.js";
+import { ConfigOAuthClientProvider, createOAuthMetadata } from "./oauth.js";
+
+type McpTool = ListToolsResult["tools"][number];
+type McpPrompt = ListPromptsResult["prompts"][number];
+type McpResource = ListResourcesResult["resources"][number];
+
+type OwnedMethod<T> = {
+  serverName: string;
+  originalName: string;
+  exposedName: string;
+  item: T;
+};
+
+type McpRuntimeOptions = {
+  onOAuthUpdate?: (serverName: string, server: McpServerConfig) => void | Promise<void>;
+};
+
+type McpClientFactory = (
+  serverName: string,
+  config: McpServerConfig,
+  options?: McpRuntimeOptions,
+) => Promise<McpClientPort>;
+
+export type McpClientPort = {
+  listTools(): Promise<ListToolsResult>;
+  callTool(params: { name: string; arguments?: Record<string, unknown> }): Promise<CallToolResult>;
+  listPrompts(): Promise<ListPromptsResult>;
+  getPrompt(params: { name: string; arguments?: Record<string, string> }): Promise<GetPromptResult>;
+  listResources(): Promise<ListResourcesResult>;
+  readResource(params: { uri: string }): Promise<ReadResourceResult>;
+  close(): Promise<void>;
+};
+
+export class McpAuthError extends Error {
+  constructor(serverName: string) {
+    super(`MCP server ${serverName} requires valid authentication. Run ai-fed setup or ai-fed config validate to refresh it.`);
+    this.name = "McpAuthError";
+  }
+}
+
+const headersInit = (server: McpServerConfig): RequestInit =>
+  server.headers ? { headers: server.headers } : {};
+
+const authProvider = (
+  serverName: string,
+  server: McpServerConfig,
+  options: McpRuntimeOptions = {},
+): ConfigOAuthClientProvider | undefined =>
+  server.oauth
+    ? new ConfigOAuthClientProvider(
+        server.oauth,
+        createOAuthMetadata(serverName, "http://localhost"),
+        () => undefined,
+        "http://localhost",
+        {
+          onChange: () => options.onOAuthUpdate?.(serverName, server),
+        },
+      )
+    : undefined;
+
+export const createSdkClient = async (
+  serverName: string,
+  config: McpServerConfig,
+  options: McpRuntimeOptions = {},
+): Promise<McpClientPort> => {
+  const client = new Client({ name: `ai-fed-${serverName}`, version: "0.1.0" });
+  const transport =
+    config.transport === "stdio"
+      ? new StdioClientTransport({
+          command: config.command ?? "",
+          args: config.args,
+          env: config.env,
+          cwd: config.cwd,
+        })
+      : config.transport === "sse"
+        ? new SSEClientTransport(new URL(config.url ?? ""), {
+            authProvider: authProvider(serverName, config, options),
+            requestInit: headersInit(config),
+          })
+        : new StreamableHTTPClientTransport(new URL(config.url ?? ""), {
+            authProvider: authProvider(serverName, config, options),
+            requestInit: headersInit(config),
+          });
+
+  await client.connect(transport);
+
+  return {
+    listTools: () => client.listTools(),
+    callTool: async (params) => (await client.callTool(params)) as CallToolResult,
+    listPrompts: () => client.listPrompts(),
+    getPrompt: (params) => client.getPrompt(params),
+    listResources: () => client.listResources(),
+    readResource: (params) => client.readResource(params),
+    close: () => client.close(),
+  };
+};
+
+const withTimeout = async <T>(promise: Promise<T>, message: string): Promise<T> => {
+  const timeout = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error(message)), 10_000);
+  });
+
+  return Promise.race([promise, timeout]);
+};
+
+export const validateMcpServerConfig = async (
+  serverName: string,
+  config: McpServerConfig,
+  createClient: McpClientFactory = createSdkClient,
+  options: McpRuntimeOptions = {},
+): Promise<void> => {
+  const client = await withTimeout(
+    createClient(serverName, config, options),
+    `Timed out connecting to MCP server ${serverName}`,
+  ).catch((error) => {
+    if (error instanceof McpAuthError || error instanceof UnauthorizedError) {
+      throw new McpAuthError(serverName);
+    }
+
+    throw new Error(`Could not connect to MCP server ${serverName}: ${String(error)}`);
+  });
+
+  try {
+    const [tools, prompts] = await withTimeout(
+      Promise.all([
+        client.listTools().catch(() => ({ tools: [] })),
+        client.listPrompts().catch(() => ({ prompts: [] })),
+      ]),
+      `Timed out validating MCP server ${serverName}`,
+    );
+    const methodNames = new Set([
+      ...tools.tools.map((tool) => tool.name),
+      ...prompts.prompts.map((prompt) => prompt.name),
+    ]);
+    const configuredNames = [
+      ...(config.method_whitelist ?? []),
+      ...(config.method_blacklist ?? []),
+      ...Object.keys(config.method_renames ?? {}),
+    ];
+    const missingNames = configuredNames.filter((name) => !methodNames.has(name));
+
+    if (methodNames.size > 0 && missingNames.length > 0) {
+      throw new Error(`MCP server ${serverName} does not expose method(s): ${missingNames.join(", ")}`);
+    }
+  } catch (error) {
+    if (error instanceof McpAuthError || error instanceof UnauthorizedError) {
+      throw new McpAuthError(serverName);
+    }
+
+    throw error;
+  } finally {
+    await client.close();
+  }
+};
+
+export const listMcpMethodNames = async (
+  serverName: string,
+  config: McpServerConfig,
+  createClient: McpClientFactory = createSdkClient,
+  options: McpRuntimeOptions = {},
+): Promise<string[]> => {
+  const client = await withTimeout(
+    createClient(serverName, config, options),
+    `Timed out connecting to MCP server ${serverName}`,
+  );
+
+  try {
+    const [tools, prompts] = await withTimeout(
+      Promise.all([
+        client.listTools().catch(() => ({ tools: [] })),
+        client.listPrompts().catch(() => ({ prompts: [] })),
+      ]),
+      `Timed out listing MCP methods for ${serverName}`,
+    );
+
+    return [...new Set([
+      ...tools.tools.map((tool) => tool.name),
+      ...prompts.prompts.map((prompt) => prompt.name),
+    ])].sort((left, right) => left.localeCompare(right));
+  } finally {
+    await client.close();
+  }
+};
+
+const isAllowed = (name: string, controls: MethodControls): boolean => {
+  if (controls.method_whitelist) {
+    return controls.method_whitelist.includes(name);
+  }
+
+  return !(controls.method_blacklist ?? []).includes(name);
+};
+
+export const exposeMethodName = (name: string, controls: MethodControls): string =>
+  controls.method_renames?.[name] ?? name;
+
+export const applyMethodControls = <T extends { name: string }>(
+  serverName: string,
+  controls: MethodControls,
+  items: T[],
+  existingNames: ReadonlySet<string> = new Set(),
+): Array<OwnedMethod<T>> => {
+  const used = new Set(existingNames);
+
+  return items.flatMap((item) => {
+    if (!isAllowed(item.name, controls)) {
+      return [];
+    }
+
+    const preferredName = exposeMethodName(item.name, controls);
+    const exposedName = used.has(preferredName) ? `${serverName}.${preferredName}` : preferredName;
+    used.add(exposedName);
+
+    return [
+      {
+        serverName,
+        originalName: item.name,
+        exposedName,
+        item,
+      },
+    ];
+  });
+};
+
+export class McpFederation {
+  constructor(private readonly clients: Record<string, { config: McpServerConfig; client: McpClientPort }>) {}
+
+  static async fromConfig(
+    config: FederationConfig,
+    createClient: McpClientFactory = createSdkClient,
+    options: McpRuntimeOptions = {},
+  ): Promise<McpFederation> {
+    const entries = await Promise.all(
+      Object.entries(config.mcp ?? {}).map(async ([serverName, serverConfig]) => [
+        serverName,
+        {
+          config: serverConfig,
+          client: await createClient(serverName, serverConfig, options),
+        },
+      ] as const),
+    );
+
+    return new McpFederation(Object.fromEntries(entries));
+  }
+
+  async listTools(): Promise<ListToolsResult> {
+    const ownedTools = await this.ownedTools();
+
+    return {
+      tools: ownedTools.map(({ exposedName, item, serverName }) => ({
+        ...item,
+        name: exposedName,
+        description: item.description ?? `Forwarded from ${serverName}`,
+      })),
+    };
+  }
+
+  async callTool(name: string, args?: Record<string, unknown>): Promise<CallToolResult> {
+    const tool = (await this.ownedTools()).find((item) => item.exposedName === name);
+
+    if (!tool) {
+      throw new Error(`Unknown federated MCP tool: ${name}`);
+    }
+
+    return this.clients[tool.serverName].client.callTool({
+      name: tool.originalName,
+      arguments: args,
+    });
+  }
+
+  async listPrompts(): Promise<ListPromptsResult> {
+    const ownedPrompts = await this.ownedPrompts();
+
+    return {
+      prompts: ownedPrompts.map(({ exposedName, item }) => ({
+        ...item,
+        name: exposedName,
+      })),
+    };
+  }
+
+  async getPrompt(name: string, args?: Record<string, string>): Promise<GetPromptResult> {
+    const prompt = (await this.ownedPrompts()).find((item) => item.exposedName === name);
+
+    if (!prompt) {
+      throw new Error(`Unknown federated MCP prompt: ${name}`);
+    }
+
+    return this.clients[prompt.serverName].client.getPrompt({
+      name: prompt.originalName,
+      arguments: args,
+    });
+  }
+
+  async listResources(): Promise<ListResourcesResult> {
+    const results = await Promise.all(
+      Object.entries(this.clients).map(async ([serverName, { client }]) => {
+        try {
+          const result = await client.listResources();
+          return result.resources.map((resource) => ({
+            ...resource,
+            name: resource.name ?? `${serverName}:${resource.uri}`,
+          }));
+        } catch (error) {
+          throw new Error(`Failed to list resources from ${serverName}: ${String(error)}`);
+        }
+      }),
+    );
+
+    return { resources: results.flat() };
+  }
+
+  async readResource(uri: string): Promise<ReadResourceResult> {
+    for (const [serverName, { client }] of Object.entries(this.clients)) {
+      const resources = await client.listResources();
+
+      if (resources.resources.some((resource) => resource.uri === uri)) {
+        try {
+          return await client.readResource({ uri });
+        } catch (error) {
+          throw new Error(`Failed to read resource ${uri} from ${serverName}: ${String(error)}`);
+        }
+      }
+    }
+
+    throw new Error(`Unknown federated MCP resource: ${uri}`);
+  }
+
+  async close(): Promise<void> {
+    await Promise.all(Object.values(this.clients).map(({ client }) => client.close()));
+  }
+
+  private async ownedTools(): Promise<Array<OwnedMethod<McpTool>>> {
+    return this.ownedMethods((client) => client.listTools().then((result) => result.tools));
+  }
+
+  private async ownedPrompts(): Promise<Array<OwnedMethod<McpPrompt>>> {
+    return this.ownedMethods((client) => client.listPrompts().then((result) => result.prompts));
+  }
+
+  private async ownedMethods<T extends { name: string }>(
+    list: (client: McpClientPort) => Promise<T[]>,
+  ): Promise<Array<OwnedMethod<T>>> {
+    const owned: Array<OwnedMethod<T>> = [];
+    const used = new Set<string>();
+
+    for (const [serverName, { client, config }] of Object.entries(this.clients)) {
+      try {
+        const result = await list(client);
+        const controlled = applyMethodControls(serverName, config, result, used);
+        controlled.forEach(({ exposedName }) => used.add(exposedName));
+        owned.push(...controlled);
+      } catch (error) {
+        throw new Error(`Failed to list MCP methods from ${serverName}: ${String(error)}`);
+      }
+    }
+
+    return owned;
+  }
+}
+
+export const createMcpServer = (federation: McpFederation): Server =>
+  {
+    const server = new Server(
+    { name: "ai-fed", version: "0.1.0" },
+    {
+      capabilities: {
+        tools: {},
+        prompts: {},
+        resources: {},
+      },
+    },
+  );
+
+    server.setRequestHandler(ListToolsRequestSchema, async () => federation.listTools());
+    server.setRequestHandler(CallToolRequestSchema, async (request) =>
+      federation.callTool(request.params.name, request.params.arguments as Record<string, unknown> | undefined),
+    );
+    server.setRequestHandler(ListPromptsRequestSchema, async () => federation.listPrompts());
+    server.setRequestHandler(GetPromptRequestSchema, async (request) =>
+      federation.getPrompt(request.params.name, request.params.arguments),
+    );
+    server.setRequestHandler(ListResourcesRequestSchema, async () => federation.listResources());
+    server.setRequestHandler(ReadResourceRequestSchema, async (request) =>
+      federation.readResource(request.params.uri),
+    );
+
+    return server;
+  };
+
+export const serveMcpStdio = async (config: FederationConfig, options: McpRuntimeOptions = {}): Promise<void> => {
+  const federation = await McpFederation.fromConfig(config, createSdkClient, options);
+  const server = createMcpServer(federation);
+  await server.connect(new StdioServerTransport());
+};
+
+export const createMcpHttpHandler = (
+  config: FederationConfig,
+  options: McpRuntimeOptions = {},
+): ((request: Request) => Promise<Response>) => {
+  let federationPromise: Promise<McpFederation> | undefined;
+
+  const getFederation = async (): Promise<McpFederation> => {
+    if (!federationPromise) {
+      federationPromise = McpFederation.fromConfig(config, createSdkClient, options);
+    }
+
+    return federationPromise;
+  };
+
+  return async (request: Request): Promise<Response> => {
+    const federation = await getFederation();
+    const server = createMcpServer(federation);
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      enableJsonResponse: true,
+    });
+    await server.connect(transport);
+    return transport.handleRequest(request);
+  };
+};

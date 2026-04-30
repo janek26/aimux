@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+ai-fed
+dist/
+build/
+coverage/
+
+# Local configuration and secrets
+.mcp-federation.yml
+.env
+.env.*
+!.env.example
+
+# Logs and diagnostics
+*.log
+*.pid
+*.seed
+*.tsbuildinfo
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

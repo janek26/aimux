@@ -1,0 +1,24 @@
+{
+  "name": "ai-federation",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "ai-fed": "./src/cli.ts"
+  },
+  "scripts": {
+    "build": "bun build ./src/cli.ts --compile --outfile ai-fed",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.3.0",
+    "@hyperjump/json-schema": "^1.17.6",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "cosmiconfig": "^9.0.1",
+    "yaml": "^2.8.3"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.13",
+    "typescript": "^6.0.3"
+  }
+}

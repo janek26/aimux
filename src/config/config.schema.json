@@ -1,0 +1,295 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-fed.dev/schemas/config.schema.json",
+  "title": "AI federation config",
+  "type": "object",
+  "$defs": {
+    "stringList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "secretMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "methodControls": {
+      "type": "object",
+      "properties": {
+        "method_whitelist": {
+          "$ref": "#/$defs/stringList"
+        },
+        "method_blacklist": {
+          "$ref": "#/$defs/stringList"
+        },
+        "method_renames": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "not": {
+        "required": ["method_whitelist", "method_blacklist"]
+      }
+    },
+    "oauthConfig": {
+      "type": "object",
+      "properties": {
+        "access_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "token_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "refresh_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expires_in": {
+          "type": "number"
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "client_secret": {
+          "type": "string",
+          "minLength": 1
+        },
+        "client_id_issued_at": {
+          "type": "number"
+        },
+        "client_secret_expires_at": {
+          "type": "number"
+        }
+      },
+      "required": ["access_token", "token_type"],
+      "dependentRequired": {
+        "refresh_token": ["client_id"]
+      },
+      "additionalProperties": false
+    },
+    "llmProvider": {
+      "type": "object",
+      "properties": {
+        "preset": {
+          "type": "string",
+          "enum": [
+            "openai",
+            "anthropic",
+            "google",
+            "mistral",
+            "groq",
+            "ollama",
+            "openrouter",
+            "fireworks"
+          ]
+        },
+        "schema": {
+          "type": "string",
+          "enum": ["openai", "anthropic"]
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": ["preset"],
+          "not": {
+            "required": ["schema"]
+          }
+        },
+        {
+          "required": ["schema", "url"],
+          "not": {
+            "required": ["preset"]
+          }
+        }
+      ]
+    },
+    "llmRoute": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["provider", "model"],
+      "additionalProperties": false
+    },
+    "llmFallbackRoute": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_whitelist": {
+          "$ref": "#/$defs/stringList"
+        },
+        "model_blacklist": {
+          "$ref": "#/$defs/stringList"
+        }
+      },
+      "required": ["provider"],
+      "additionalProperties": false,
+      "not": {
+        "required": ["model_whitelist", "model_blacklist"]
+      }
+    },
+    "mcpServer": {
+      "type": "object",
+      "properties": {
+        "transport": {
+          "type": "string",
+          "enum": ["stdio", "http", "sse"]
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "headers": {
+          "$ref": "#/$defs/secretMap"
+        },
+        "env": {
+          "$ref": "#/$defs/secretMap"
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "oauth": {
+          "$ref": "#/$defs/oauthConfig"
+        },
+        "method_whitelist": {
+          "$ref": "#/$defs/stringList"
+        },
+        "method_blacklist": {
+          "$ref": "#/$defs/stringList"
+        },
+        "method_renames": {
+          "$ref": "#/$defs/methodControls/properties/method_renames"
+        }
+      },
+      "required": ["transport"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$ref": "#/$defs/methodControls"
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "transport": {
+                  "const": "stdio"
+                }
+              },
+              "required": ["command"],
+              "not": {
+                "required": ["url"]
+              }
+            },
+            {
+              "properties": {
+                "transport": {
+                  "enum": ["http", "sse"]
+                }
+              },
+              "required": ["url"],
+              "not": {
+                "required": ["command"]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "properties": {
+    "providers": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9._/-]*$": {
+          "$ref": "#/$defs/llmProvider"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "llm": {
+      "type": "object",
+      "properties": {
+        "fallback": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/llmFallbackRoute"
+          },
+          "minItems": 1
+        }
+      },
+      "patternProperties": {
+        "^(?!fallback$)[A-Za-z0-9][A-Za-z0-9._/-]*$": {
+          "$ref": "#/$defs/llmRoute"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "mcp": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9._-]*$": {
+          "$ref": "#/$defs/mcpServer"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    }
+  },
+  "additionalProperties": false
+}

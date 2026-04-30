@@ -1,0 +1,101 @@
+export const CONFIG_FILE_NAME = ".mcp-federation.yml";
+export const CONFIG_FILE_NAMES = [CONFIG_FILE_NAME, ".mcp-federation.yaml"] as const;
+
+export const LLM_PRESETS = [
+  "openai",
+  "anthropic",
+  "google",
+  "mistral",
+  "groq",
+  "ollama",
+  "openrouter",
+  "fireworks",
+] as const;
+
+export const LLM_SCHEMAS = ["openai", "anthropic"] as const;
+export const MCP_TRANSPORTS = ["stdio", "http", "sse"] as const;
+
+export type LlmPreset = (typeof LLM_PRESETS)[number];
+export type LlmSchema = (typeof LLM_SCHEMAS)[number];
+export type McpTransport = (typeof MCP_TRANSPORTS)[number];
+
+export type JsonObject = Record<string, unknown>;
+
+export type LlmProvider = {
+  preset?: LlmPreset;
+  schema?: LlmSchema;
+  url?: string;
+  token?: string;
+};
+
+export type LlmRoute = {
+  provider: string;
+  model?: string;
+};
+
+export type LlmFallbackRoute = {
+  provider: string;
+  model_whitelist?: string[];
+  model_blacklist?: string[];
+};
+
+export type LlmConfig = {
+  fallback?: LlmFallbackRoute[];
+} & Record<string, LlmFallbackRoute[] | LlmRoute | undefined>;
+
+export type MethodControls = {
+  method_whitelist?: string[];
+  method_blacklist?: string[];
+  method_renames?: Record<string, string>;
+};
+
+export type McpOAuthConfig = {
+  access_token?: string;
+  token_type?: string;
+  refresh_token?: string;
+  id_token?: string;
+  expires_in?: number;
+  scope?: string;
+  client_id?: string;
+  client_secret?: string;
+  client_id_issued_at?: number;
+  client_secret_expires_at?: number;
+};
+
+export type McpServerConfig = MethodControls & {
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
+  cwd?: string;
+  oauth?: McpOAuthConfig;
+};
+
+export type FederationConfig = {
+  providers?: Record<string, LlmProvider>;
+  llm?: LlmConfig;
+  mcp?: Record<string, McpServerConfig>;
+};
+
+export type ConfigLocation = {
+  path: string;
+  config: FederationConfig;
+};
+
+export type ValidationResult = {
+  valid: boolean;
+  errors: string[];
+};
+
+export type ConfigRepositoryPort = {
+  findConfigPath(startDir?: string): Promise<string | undefined>;
+  read(path?: string): Promise<ConfigLocation | undefined>;
+  write(path: string, config: FederationConfig): Promise<void>;
+};
+
+export type ConfigValidatorPort = {
+  validate(config: FederationConfig): Promise<ValidationResult>;
+  assertValid(config: FederationConfig): Promise<void>;
+};
