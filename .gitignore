@@ -13,6 +13,14 @@ coverage/
 .env.*
 !.env.example
 
+# Generated client integrations
+opencode.json
+.cursor/mcp.json
+.zed/settings.json
+.mcp.json
+.codex/config.toml
+.gemini/settings.json
+
 # Logs and diagnostics
 *.log
 *.pid

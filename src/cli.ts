@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 import { cancel, intro, isCancel, multiselect, outro, password, select, text } from "@clack/prompts";
+import { mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { createDefaultConfig, addLlmProvider, addMcpServer, listLlmProviders, listMcpServers, removeLlmProvider, removeMcpServer } from "./core/config.js";
 import { HyperjumpConfigValidator } from "./config/validation.js";
 import { YamlConfigRepository } from "./config/repository.js";
@@ -42,6 +44,7 @@ Commands:
   ai-fed setup
   ai-fed config path
   ai-fed config validate
+  ai-fed generate [opencode|cursor|zed|claude-code|codex|gemini-cli|all] [--port <port>]
   ai-fed llm add fallback --name <provider> (--preset <preset> | --schema <schema> --url <url>)
   ai-fed llm add <custom-model> --name <provider> --model <upstream-model>
   ai-fed llm remove <name>
@@ -197,6 +200,8 @@ const stringFlag = (flags: ParsedArgs["flags"], name: string): string | undefine
   typeof flags[name] === "string" ? flags[name] : undefined;
 
 const serverOrigin = (port: number): string => `http://localhost:${port}`;
+const llmBaseUrl = (port: number): string => `${serverOrigin(port)}/v1`;
+const mcpUrl = (port: number): string => `${serverOrigin(port)}/mcp`;
 
 const currentCliCommand = (): string => {
   const invokedCommand = process.argv[1] ?? Bun.argv[1];
@@ -241,6 +246,351 @@ const formatMcpStdioServeDetails = (): string =>
     `Configure MCP clients with command: ${currentCliCommand()}`,
     "Arguments: serve mcp",
   ].join("\n");
+
+const GENERATED_TOOL_NAMES = ["opencode", "cursor", "zed", "claude-code", "codex", "gemini-cli"] as const;
+type GeneratedToolName = (typeof GENERATED_TOOL_NAMES)[number];
+
+type ToolGenerationResult = {
+  path: string;
+  warnings: string[];
+};
+
+type ToolGenerationOutcome = {
+  configured: {
+    llm: boolean;
+    mcp: boolean;
+  };
+  warnings: string[];
+};
+
+type ToolGenerator = {
+  name: GeneratedToolName;
+  outputPath: string;
+  write(params: {
+    outputPath: string;
+    config: FederationConfig;
+    port: number;
+  }): Promise<ToolGenerationOutcome>;
+};
+
+const isJsonObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const readJsonObject = async (path: string): Promise<Record<string, unknown>> => {
+  const file = Bun.file(path);
+
+  if (!(await file.exists())) {
+    return {};
+  }
+
+  const parsed = JSON.parse(await file.text()) as unknown;
+
+  if (!isJsonObject(parsed)) {
+    throw new Error(`${path} must contain a JSON object`);
+  }
+
+  return parsed;
+};
+
+const writeJsonObject = async (path: string, value: Record<string, unknown>): Promise<void> => {
+  await mkdir(dirname(path), { recursive: true });
+  await Bun.write(path, `${JSON.stringify(value, null, 2)}\n`);
+};
+
+const writeMergedJsonObject = async (path: string, value: Record<string, unknown>): Promise<void> => {
+  const current = await readJsonObject(path);
+  await writeJsonObject(path, mergeJsonObjects(current, value));
+};
+
+const configuredClientModels = (config: FederationConfig): string[] => {
+  const mapped = Object.entries(config.llm ?? {}).flatMap(([target, route]) =>
+    target !== "fallback" && route && !Array.isArray(route) ? [target] : [],
+  );
+  const fallbackWhitelist = (config.llm?.fallback ?? []).flatMap((route) => route.model_whitelist ?? []);
+
+  return [...new Set([...mapped, ...fallbackWhitelist])].sort((left, right) => left.localeCompare(right));
+};
+
+const mergeJsonObjects = (
+  current: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Record<string, unknown> => ({
+  ...current,
+  ...Object.fromEntries(
+    Object.entries(next).map(([key, nextValue]) => {
+      const currentValue = current[key];
+
+      return [
+        key,
+        isJsonObject(currentValue) && isJsonObject(nextValue)
+          ? mergeJsonObjects(currentValue, nextValue)
+          : nextValue,
+      ];
+    }),
+  ),
+});
+
+const mcpServerJson = (port: number): Record<string, unknown> => ({
+  type: "http",
+  url: mcpUrl(port),
+});
+
+const cursorMcpServerJson = (port: number): Record<string, unknown> => ({
+  url: mcpUrl(port),
+});
+
+const stdioMcpServerJson = (): Record<string, unknown> => ({
+  command: currentCliCommand(),
+  args: ["serve", "mcp"],
+});
+
+const zedModelJson = (model: string): Record<string, unknown> => ({
+  name: model,
+  display_name: model,
+  max_tokens: 128000,
+  capabilities: {
+    tools: true,
+  },
+});
+
+const tomlString = (value: string): string => JSON.stringify(value);
+
+const managedTomlBlock = (body: string): string =>
+  `# <ai-fed-generated>\n${body.trim()}\n# </ai-fed-generated>\n`;
+
+const mergeManagedTomlBlock = (current: string, body: string): string => {
+  const nextBlock = managedTomlBlock(body);
+  const pattern = /# <ai-fed-generated>[\s\S]*?# <\/ai-fed-generated>\n?/;
+
+  if (pattern.test(current)) {
+    return current.replace(pattern, nextBlock);
+  }
+
+  const separator = current.trim().length > 0 && !current.endsWith("\n") ? "\n\n" : current.length > 0 ? "\n" : "";
+  return `${current}${separator}${nextBlock}`;
+};
+
+const writeManagedToml = async (path: string, body: string): Promise<void> => {
+  const file = Bun.file(path);
+  const current = await file.exists() ? await file.text() : "";
+  await mkdir(dirname(path), { recursive: true });
+  await Bun.write(path, mergeManagedTomlBlock(current, body));
+};
+
+const generationOutcome = (
+  configured: ToolGenerationOutcome["configured"],
+  warnings: string[] = [],
+): ToolGenerationOutcome => ({ configured, warnings });
+
+const unsupportedLlmWarning = (toolName: GeneratedToolName): string =>
+  `${toolName}: LLM endpoint config is not supported by project-local generation; wrote MCP config only.`;
+
+const missingModelsWarning = (toolName: GeneratedToolName): string =>
+  `${toolName}: no concrete LLM models found in config; wrote MCP config and skipped LLM model entries.`;
+
+const toolGenerators: Record<GeneratedToolName, ToolGenerator> = {
+  opencode: {
+    name: "opencode",
+    outputPath: "opencode.json",
+    write: async ({ outputPath, config, port }) => {
+      const models = configuredClientModels(config);
+      const provider = models.length > 0
+        ? {
+            "ai-fed": {
+              npm: "@ai-sdk/openai-compatible",
+              name: "Local AI Federation",
+              options: {
+                baseURL: llmBaseUrl(port),
+              },
+              models: Object.fromEntries(models.map((model) => [model, { name: model }])),
+            },
+          }
+        : {};
+
+      await writeMergedJsonObject(outputPath, {
+        $schema: "https://opencode.ai/config.json",
+        ...(models[0] ? { model: `ai-fed/${models[0]}` } : {}),
+        provider,
+        mcp: {
+          "ai-fed": {
+            type: "remote",
+            url: mcpUrl(port),
+            enabled: true,
+          },
+        },
+      });
+
+      return generationOutcome(
+        { llm: models.length > 0, mcp: true },
+        models.length > 0 ? [] : [missingModelsWarning("opencode")],
+      );
+    },
+  },
+  cursor: {
+    name: "cursor",
+    outputPath: ".cursor/mcp.json",
+    write: async ({ outputPath, config, port }) => {
+      await writeMergedJsonObject(outputPath, {
+        mcpServers: {
+          "ai-fed": cursorMcpServerJson(port),
+        },
+      });
+
+      return generationOutcome(
+        { llm: false, mcp: true },
+        [unsupportedLlmWarning("cursor")],
+      );
+    },
+  },
+  zed: {
+    name: "zed",
+    outputPath: ".zed/settings.json",
+    write: async ({ outputPath, config, port }) => {
+      const models = configuredClientModels(config);
+      const languageModels = models.length > 0
+        ? {
+            language_models: {
+              openai_compatible: {
+                "AI Federation": {
+                  api_url: llmBaseUrl(port),
+                  available_models: models.map(zedModelJson),
+                },
+              },
+            },
+          }
+        : {};
+
+      await writeMergedJsonObject(outputPath, {
+        ...languageModels,
+        context_servers: {
+          "ai-fed": stdioMcpServerJson(),
+        },
+      });
+
+      return generationOutcome(
+        { llm: models.length > 0, mcp: true },
+        models.length > 0 ? [] : [missingModelsWarning("zed")],
+      );
+    },
+  },
+  "claude-code": {
+    name: "claude-code",
+    outputPath: ".mcp.json",
+    write: async ({ outputPath, config, port }) => {
+      await writeMergedJsonObject(outputPath, {
+        mcpServers: {
+          "ai-fed": mcpServerJson(port),
+        },
+      });
+
+      return generationOutcome(
+        { llm: false, mcp: true },
+        [unsupportedLlmWarning("claude-code")],
+      );
+    },
+  },
+  codex: {
+    name: "codex",
+    outputPath: ".codex/config.toml",
+    write: async ({ outputPath, config, port }) => {
+      const models = configuredClientModels(config);
+      const modelLine = models[0] ? `model = ${tomlString(models[0])}\n` : "";
+      const providerBlock = models.length > 0
+        ? `${modelLine}model_provider = "ai-fed"\n\n[model_providers.ai-fed]\nname = "AI Federation"\nbase_url = ${tomlString(llmBaseUrl(port))}\nenv_key = "AI_FED_API_KEY"\n`
+        : "";
+
+      await writeManagedToml(
+        outputPath,
+        `${providerBlock}\n[mcp_servers.ai-fed]\nurl = ${tomlString(mcpUrl(port))}\n`,
+      );
+
+      return generationOutcome(
+        { llm: models.length > 0, mcp: true },
+        models.length > 0 ? [] : [missingModelsWarning("codex")],
+      );
+    },
+  },
+  "gemini-cli": {
+    name: "gemini-cli",
+    outputPath: ".gemini/settings.json",
+    write: async ({ outputPath, config, port }) => {
+      await writeMergedJsonObject(outputPath, {
+        mcpServers: {
+          "ai-fed": {
+            httpUrl: mcpUrl(port),
+            timeout: 300000,
+            trust: true,
+          },
+        },
+      });
+
+      return generationOutcome(
+        { llm: false, mcp: true },
+        [unsupportedLlmWarning("gemini-cli")],
+      );
+    },
+  },
+};
+
+const parseGenerateTools = (values: string[]): GeneratedToolName[] => {
+  const requested = values.flatMap((value) => value.split(",").map((item) => item.trim()).filter(Boolean));
+
+  if (requested.length === 0) {
+    throw new Error(`Missing tool name. Expected one of: ${[...GENERATED_TOOL_NAMES, "all"].join(", ")}`);
+  }
+
+  if (requested.includes("all")) {
+    return [...GENERATED_TOOL_NAMES];
+  }
+
+  const unknown = requested.filter((value) => !GENERATED_TOOL_NAMES.includes(value as GeneratedToolName));
+
+  if (unknown.length > 0) {
+    throw new Error(`Unsupported generate target(s): ${unknown.join(", ")}. Supported: ${[...GENERATED_TOOL_NAMES, "all"].join(", ")}`);
+  }
+
+  return [...new Set(requested as GeneratedToolName[])];
+};
+
+const collectGenerateTools = async (args: ParsedArgs): Promise<GeneratedToolName[]> => {
+  const requested = args.command.slice(1);
+
+  if (requested.length > 0) {
+    return parseGenerateTools(requested);
+  }
+
+  if (!isTty()) {
+    return parseGenerateTools(requested);
+  }
+
+  return requireMultiSelection(
+    multiselect({
+      message: "Generate config for which tools?",
+      options: GENERATED_TOOL_NAMES.map((tool) => ({ label: tool, value: tool })),
+      required: true,
+    }),
+  );
+};
+
+const generateToolConfig = async (
+  cwd: string,
+  config: FederationConfig,
+  toolName: GeneratedToolName,
+  port: number,
+): Promise<ToolGenerationResult> => {
+  const generator = toolGenerators[toolName];
+  const outputPath = join(cwd, generator.outputPath);
+  const outcome = await generator.write({ outputPath, config, port });
+
+  if (!outcome.configured.llm && !outcome.configured.mcp) {
+    throw new Error(`${toolName}: could not configure either LLM or MCP for this tool.`);
+  }
+
+  return {
+    path: outputPath,
+    warnings: outcome.warnings,
+  };
+};
 
 const requireSelection = async <T extends string>(value: Promise<T | symbol>): Promise<T> => {
   const selected = await value;
@@ -291,6 +641,7 @@ const usesPromptUi = (args: ParsedArgs): boolean => {
   return (
     domain === "init" ||
     domain === "setup" ||
+    domain === "generate" ||
     (domain === "config" && action === "init") ||
     (domain === "config" && action === "validate") ||
     (domain === "llm" && action === "add") ||
@@ -865,6 +1216,28 @@ export const runCli = async (argv: string[], context: CliContext = {
       const validatedConfig = stripUndefined(await validateConfigPreflight(location.config)) as FederationConfig;
       await repository.write(location.path, validatedConfig);
       context.stdout(`Valid config: ${location.path}`);
+      return 0;
+    }
+
+    if (domain === "generate") {
+      const location = await readConfigFrom(repository, context.cwd);
+
+      if (!location) {
+        throw new Error("No config found");
+      }
+
+      await createValidator().assertValid(location.config);
+      const port = Number(stringFlag(args.flags, "port") ?? 8787);
+      const tools = await collectGenerateTools(args);
+      const results = await Promise.all(
+        tools.map((tool) => generateToolConfig(context.cwd, location.config, tool, port)),
+      );
+
+      for (const result of results) {
+        context.stdout(`Generated ${result.path}`);
+        result.warnings.forEach((warning) => context.stderr(warning));
+      }
+
       return 0;
     }
 

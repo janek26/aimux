@@ -35,6 +35,14 @@ Run both the LLM gateway and MCP Streamable HTTP endpoint:
 bun src/cli.ts serve --port 8787
 ```
 
+Generate local client config for tools that can connect to the gateway:
+
+```sh
+bun src/cli.ts generate all
+```
+
+This writes supported tool config into the current directory. Targets include `opencode`, `cursor`, `zed`, `claude-code`, `codex`, and `gemini-cli`. If a tool cannot configure the LLM endpoint from project-local config, AI Federation logs that and still writes MCP config when supported.
+
 Use it like an OpenAI-compatible API:
 
 ```sh
@@ -96,6 +104,7 @@ bun src/cli.ts setup
 bun src/cli.ts setup
 bun src/cli.ts config path
 bun src/cli.ts config validate
+bun src/cli.ts generate all
 bun src/cli.ts llm list
 bun src/cli.ts llm remove <provider-name>
 bun src/cli.ts mcp list
