@@ -100,8 +100,14 @@ const waitForHttp = async (url: string, process: Bun.Subprocess): Promise<void> 
 };
 
 const stopProcess = async (process: Bun.Subprocess): Promise<void> => {
-  process.kill();
-  await Promise.race([process.exited, Bun.sleep(1_000)]);
+  process.kill("SIGTERM");
+
+  const exitCode = await Promise.race([process.exited, Bun.sleep(1_000).then(() => undefined)]);
+
+  if (exitCode === undefined) {
+    process.kill("SIGKILL");
+    await process.exited;
+  }
 };
 
 const readOutputChunk = async (stream: ReadableStream<Uint8Array> | null): Promise<string> => {
@@ -133,6 +139,22 @@ const server = new Server(
   { name: "fake-mcp", version: "1.0.0" },
   { capabilities: { tools: {} } },
 );
+
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
+  await server.close().catch(() => undefined);
+  process.exit(0);
+};
+
+process.stdin.on("end", () => void shutdown());
+process.stdin.on("close", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
+process.on("SIGINT", () => void shutdown());
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
@@ -365,6 +387,12 @@ describe("CLI e2e", () => {
           await client.connect(transport);
           const tools = await client.listTools();
           expect(tools.tools.map((tool) => tool.name)).toEqual(["fake_echo"]);
+
+          const toolResult = await client.callTool({
+            name: "fake_echo",
+            arguments: { message: "http" },
+          });
+          expect(toolResult.content).toEqual([{ type: "text", text: "fake:http" }]);
         } finally {
           await client.close();
         }

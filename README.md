@@ -1,24 +1,24 @@
 # AI Federation
 
-One config and one CLI for managing LLM endpoints and MCP servers, then re-exposing them as unified gateways.
+One config and one Bun CLI for managing LLM providers and MCP servers, then exposing them as local gateways that AI tools can share.
+
+AI Federation is useful when you want:
+
+- One OpenAI-compatible `/v1` endpoint backed by multiple upstream providers.
+- One MCP server that federates tools, prompts, and resources from many MCP servers.
+- Generated local config for tools such as OpenCode, Cursor, Zed, Claude Code, Codex, and Gemini CLI.
+- A project-local or home-level config that can be validated before it is used.
 
 ## Quick Start
 
-Install dependencies:
-
 ```sh
 bun install
-```
-
-Create a config:
-
-```sh
 bun src/cli.ts init
 ```
 
-In an interactive terminal this asks whether to create `.mcp-federation.yml` in the current directory or in your home directory. The config starts empty, so no local provider such as Ollama is assumed.
+`init` creates an empty `.mcp-federation.yml`. In an interactive terminal it asks whether to create the file in the current project or in your home directory. The CLI searches from the current directory upward and uses the closest config file, then falls back to `~/.mcp-federation.yml`.
 
-Add an OpenAI-compatible LLM provider:
+Add an OpenAI-compatible provider to the fallback route:
 
 ```sh
 bun src/cli.ts llm add fallback \
@@ -27,23 +27,13 @@ bun src/cli.ts llm add fallback \
   --token "$OPENAI_API_KEY"
 ```
 
-This creates a top-level provider named `openai` and adds it to `llm.fallback`.
-
-Run both the LLM gateway and MCP Streamable HTTP endpoint:
+Run the combined LLM and MCP gateway:
 
 ```sh
 bun src/cli.ts serve --port 8787
 ```
 
-Generate local client config for tools that can connect to the gateway:
-
-```sh
-bun src/cli.ts generate all
-```
-
-This writes supported tool config into the current directory. Targets include `opencode`, `cursor`, `zed`, `claude-code`, `codex`, and `gemini-cli`. If a tool cannot configure the LLM endpoint from project-local config, AI Federation logs that and still writes MCP config when supported.
-
-Use it like an OpenAI-compatible API:
+Use the LLM gateway like an OpenAI-compatible API:
 
 ```sh
 curl http://localhost:8787/v1/models
@@ -57,6 +47,10 @@ curl http://localhost:8787/v1/chat/completions \
     "messages": [{ "role": "user", "content": "Hello" }]
   }'
 ```
+
+For OpenAI-compatible providers, AI Federation forwards chat-completion request and response bodies without rewriting them except for configured model remapping. That means provider-supported streaming, tool calls, structured outputs, image inputs, and other OpenAI-compatible fields pass through to the upstream provider.
+
+Anthropic providers are adapted through the Messages API for basic chat-completion compatibility. Non-streaming text responses are normalized back to OpenAI-compatible responses, and streaming responses are proxied as returned by Anthropic. Full Anthropic multimodal and tool-use normalization is not claimed yet.
 
 ## MCP Quick Start
 
@@ -76,9 +70,11 @@ Expose all configured MCP servers as one stdio MCP server:
 bun src/cli.ts serve mcp
 ```
 
-`serve` prints the LLM base URL, model/chat URLs, MCP Streamable HTTP URL, and the stdio command to configure in MCP clients. `serve mcp` writes setup details to stderr so stdout remains reserved for the MCP protocol. OAuth refreshes update `.mcp-federation.yml`; pass `--frozen` to `serve` or `serve mcp` to keep the config file unchanged.
+`serve` prints the LLM base URL, model/chat URLs, MCP Streamable HTTP URL, and the stdio command to configure in MCP clients. `serve mcp` writes setup details to stderr so stdout remains reserved for the MCP protocol.
 
-Interactive `mcp add` can fetch available MCP tools/prompts and let you choose a whitelist or blacklist before writing config. You can also provide filters or renames with flags:
+Interactive `mcp add` validates a server before writing it to config. For remote MCP servers, it can run the standard MCP OAuth flow, start a temporary localhost callback, exchange the auth code, and persist only the credentials needed for future requests. If OAuth is not available, the CLI offers bearer-token or custom-header setup.
+
+You can also provide method filters or renames with flags:
 
 ```sh
 bun src/cli.ts mcp add hugging-face https://huggingface.co/mcp \
@@ -88,15 +84,17 @@ bun src/cli.ts mcp add hugging-face https://huggingface.co/mcp \
   --method-renames model_search:hf_model_search
 ```
 
-`mcp add` validates the server before writing the config. For remote MCP servers, interactive mode first uses the standard MCP OAuth flow: it lets the SDK discover auth metadata, prints the authorization URL when OAuth is required, starts a temporary localhost callback, exchanges the auth code, and stores only the OAuth credentials needed for future requests in `.mcp-federation.yml` (`access_token`, `token_type`, and, when issued, `refresh_token` plus the issued `client_id`/secret needed to refresh). If OAuth is not available, the CLI offers bearer-token or custom-header setup. You can also pass a static header up front, such as `--header "Authorization=Bearer $TOKEN"`.
+## Client Config Generation
 
-Run setup any time to validate the whole config, including live LLM/MCP preflight checks:
+Generate local client config for supported tools:
 
 ```sh
-bun src/cli.ts setup
+bun src/cli.ts generate all
 ```
 
-`config validate` is an alias for the same full validation flow.
+Targets include `opencode`, `cursor`, `zed`, `claude-code`, `codex`, and `gemini-cli`. Some tools cannot configure an LLM endpoint from project-local config; AI Federation logs that limitation and still writes MCP config when supported.
+
+Generated client config is intentionally ignored by git because it is local machine state.
 
 ## Common Commands
 
@@ -111,26 +109,19 @@ bun src/cli.ts mcp list
 bun src/cli.ts mcp remove <server-name>
 ```
 
-## Build A Binary
+`setup` and `config validate` run schema validation plus live LLM/MCP preflight checks. OAuth refreshes update `.mcp-federation.yml`; pass `--frozen` to `serve` or `serve mcp` to keep the config file unchanged.
 
-```sh
-bun run build
-./ai-fed help
-```
+## Configuration
 
-After building, use `./ai-fed` instead of `bun src/cli.ts`.
+AI Federation stores settings in `.mcp-federation.yml` or `.mcp-federation.yaml`.
 
-## Config
-
-AI Federation stores settings in `.mcp-federation.yml`. The CLI searches from the current directory upward and uses the closest config file.
-
-Example:
+Do not commit real config files. They can contain API keys, MCP headers, OAuth access tokens, and refresh tokens. Use `.mcp-federation.example.yml` as a safe starting point.
 
 ```yaml
 providers:
   openai-prod:
     preset: openai
-    token: sk-...
+    token: <OPENAI_API_KEY>
   local-ollama:
     preset: ollama
 
@@ -147,21 +138,42 @@ mcp:
     command: mcp-server-filesystem
     args: ["."]
     method_blacklist: ["delete_file"]
-  remote-oauth:
-    transport: http
-    url: https://mcp.example.com/mcp
-    oauth:
-      access_token: mcp_access_token
-      refresh_token: mcp_refresh_token
-      token_type: Bearer
-      client_id: issued-client-id
 ```
+
+## Architecture
+
+The CLI is intentionally small and split by responsibility:
+
+- `src/cli.ts` handles argument parsing, prompts, command orchestration, and local client config generation.
+- `src/config` owns config types, schema validation, and YAML repository behavior.
+- `src/core` contains pure config transforms such as add/remove/list operations.
+- `src/llm` resolves provider presets and proxies OpenAI-compatible chat/model requests.
+- `src/mcp` creates MCP clients, applies method controls, handles OAuth persistence, and exposes the federated server.
+
+See `docs/PROJECT.md` for the project architecture and implementation notes.
 
 ## Development
 
 ```sh
+bun install
 bun run typecheck
 bun test
+bun run check
+```
+
+Build a local binary:
+
+```sh
+bun run build
+./ai-fed help
 ```
 
 The e2e tests run the real CLI in isolated temp directories with fake LLM and MCP servers.
+
+## Contributing
+
+Issues and pull requests are welcome. Please read `CONTRIBUTING.md` and run `bun run check` before opening a PR.
+
+## License
+
+MIT

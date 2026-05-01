@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { applyMethodControls, listMcpMethodNames, McpAuthError, McpFederation, validateMcpServerConfig, type McpClientPort } from "../src/mcp/gateway.js";
+import { applyMethodControls, createMcpHttpHandler, listMcpMethodNames, McpAuthError, McpFederation, validateMcpServerConfig, type McpClientPort } from "../src/mcp/gateway.js";
 import type { McpServerConfig } from "../src/config/types.js";
 
 const fakeClient = (toolNames: string[]): McpClientPort => ({
@@ -110,5 +110,29 @@ describe("MCP gateway", () => {
         async () => client,
       ),
     ).resolves.toEqual(["echo", "search", "summarize"]);
+  });
+
+  test("retries MCP HTTP federation creation after an initialization failure", async () => {
+    let attempts = 0;
+    const handler = createMcpHttpHandler(
+      {
+        mcp: {
+          flaky: {
+            transport: "http",
+            url: "https://mcp.example",
+          },
+        },
+      },
+      {},
+      async () => {
+        attempts += 1;
+        throw new Error("temporary failure");
+      },
+    );
+    const request = new Request("http://localhost/mcp", { method: "POST" });
+
+    await expect(handler(request)).rejects.toThrow("temporary failure");
+    await expect(handler(request)).rejects.toThrow("temporary failure");
+    expect(attempts).toBe(2);
   });
 });

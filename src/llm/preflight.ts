@@ -1,7 +1,7 @@
 import type { LlmFallbackRoute, LlmProvider, LlmRoute } from "../config/types.js";
 import { assertProviderToken, resolveProvider, type ResolvedLlmProvider } from "./providers.js";
 
-type FetchLike = typeof fetch;
+type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 type ModelList = {
   data?: Array<{ id?: string }>;
@@ -24,11 +24,18 @@ const authHeaders = (provider: LlmProvider, schema = resolveProvider(provider).s
 };
 
 const withTimeout = async <T>(promise: Promise<T>, message: string): Promise<T> => {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error(message)), 10_000);
+    timeoutId = setTimeout(() => reject(new Error(message)), 10_000);
   });
 
-  return Promise.race([promise, timeout]);
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 };
 
 const listProviderModels = async (

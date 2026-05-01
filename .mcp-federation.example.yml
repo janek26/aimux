@@ -1,0 +1,29 @@
+# Copy this file to .mcp-federation.yml and replace placeholders with local values.
+# Do not commit real .mcp-federation.yml files; they can contain API keys and OAuth tokens.
+
+providers:
+  openai:
+    preset: openai
+    token: <OPENAI_API_KEY>
+  local-ollama:
+    preset: ollama
+
+llm:
+  custom/prod:
+    provider: openai
+    model: gpt-4o
+  fallback:
+    - provider: local-ollama
+
+mcp:
+  github:
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: <GITHUB_PERSONAL_ACCESS_TOKEN>
+  local-files:
+    transport: stdio
+    command: mcp-server-filesystem
+    args: ["."]
+    method_blacklist: ["delete_file"]

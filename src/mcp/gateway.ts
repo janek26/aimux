@@ -25,7 +25,6 @@ import { ConfigOAuthClientProvider, createOAuthMetadata } from "./oauth.js";
 
 type McpTool = ListToolsResult["tools"][number];
 type McpPrompt = ListPromptsResult["prompts"][number];
-type McpResource = ListResourcesResult["resources"][number];
 
 type OwnedMethod<T> = {
   serverName: string;
@@ -36,6 +35,14 @@ type OwnedMethod<T> = {
 
 type McpRuntimeOptions = {
   onOAuthUpdate?: (serverName: string, server: McpServerConfig) => void | Promise<void>;
+};
+
+export type McpHttpHandler = ((request: Request) => Promise<Response>) & {
+  close(): Promise<void>;
+};
+
+export type McpStdioSession = {
+  close(): Promise<void>;
 };
 
 type McpClientFactory = (
@@ -90,17 +97,17 @@ export const createSdkClient = async (
   const transport =
     config.transport === "stdio"
       ? new StdioClientTransport({
-          command: config.command ?? "",
+          command: config.command,
           args: config.args,
           env: config.env,
           cwd: config.cwd,
         })
       : config.transport === "sse"
-        ? new SSEClientTransport(new URL(config.url ?? ""), {
+        ? new SSEClientTransport(new URL(config.url), {
             authProvider: authProvider(serverName, config, options),
             requestInit: headersInit(config),
           })
-        : new StreamableHTTPClientTransport(new URL(config.url ?? ""), {
+        : new StreamableHTTPClientTransport(new URL(config.url), {
             authProvider: authProvider(serverName, config, options),
             requestInit: headersInit(config),
           });
@@ -119,11 +126,35 @@ export const createSdkClient = async (
 };
 
 const withTimeout = async <T>(promise: Promise<T>, message: string): Promise<T> => {
-  const timeout = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error(message)), 10_000);
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), 10_000);
   });
 
-  return Promise.race([promise, timeout]);
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+};
+
+const createClientWithTimeout = async (
+  serverName: string,
+  config: McpServerConfig,
+  createClient: McpClientFactory,
+  options: McpRuntimeOptions,
+  message: string,
+): Promise<McpClientPort> => {
+  const clientPromise = createClient(serverName, config, options);
+
+  try {
+    return await withTimeout(clientPromise, message);
+  } catch (error) {
+    void clientPromise.then((client) => client.close()).catch(() => undefined);
+    throw error;
+  }
 };
 
 export const validateMcpServerConfig = async (
@@ -132,8 +163,11 @@ export const validateMcpServerConfig = async (
   createClient: McpClientFactory = createSdkClient,
   options: McpRuntimeOptions = {},
 ): Promise<void> => {
-  const client = await withTimeout(
-    createClient(serverName, config, options),
+  const client = await createClientWithTimeout(
+    serverName,
+    config,
+    createClient,
+    options,
     `Timed out connecting to MCP server ${serverName}`,
   ).catch((error) => {
     if (error instanceof McpAuthError || error instanceof UnauthorizedError) {
@@ -182,8 +216,11 @@ export const listMcpMethodNames = async (
   createClient: McpClientFactory = createSdkClient,
   options: McpRuntimeOptions = {},
 ): Promise<string[]> => {
-  const client = await withTimeout(
-    createClient(serverName, config, options),
+  const client = await createClientWithTimeout(
+    serverName,
+    config,
+    createClient,
+    options,
     `Timed out connecting to MCP server ${serverName}`,
   );
 
@@ -284,7 +321,13 @@ export class McpFederation {
       throw new Error(`Unknown federated MCP tool: ${name}`);
     }
 
-    return this.clients[tool.serverName].client.callTool({
+    const client = this.clients[tool.serverName]?.client;
+
+    if (!client) {
+      throw new Error(`MCP client for ${tool.serverName} is not available`);
+    }
+
+    return client.callTool({
       name: tool.originalName,
       arguments: args,
     });
@@ -308,7 +351,13 @@ export class McpFederation {
       throw new Error(`Unknown federated MCP prompt: ${name}`);
     }
 
-    return this.clients[prompt.serverName].client.getPrompt({
+    const client = this.clients[prompt.serverName]?.client;
+
+    if (!client) {
+      throw new Error(`MCP client for ${prompt.serverName} is not available`);
+    }
+
+    return client.getPrompt({
       name: prompt.originalName,
       arguments: args,
     });
@@ -381,9 +430,8 @@ export class McpFederation {
   }
 }
 
-export const createMcpServer = (federation: McpFederation): Server =>
-  {
-    const server = new Server(
+export const createMcpServer = (federation: McpFederation): Server => {
+  const server = new Server(
     { name: "ai-fed", version: "0.1.0" },
     {
       capabilities: {
@@ -394,49 +442,133 @@ export const createMcpServer = (federation: McpFederation): Server =>
     },
   );
 
-    server.setRequestHandler(ListToolsRequestSchema, async () => federation.listTools());
-    server.setRequestHandler(CallToolRequestSchema, async (request) =>
-      federation.callTool(request.params.name, request.params.arguments as Record<string, unknown> | undefined),
-    );
-    server.setRequestHandler(ListPromptsRequestSchema, async () => federation.listPrompts());
-    server.setRequestHandler(GetPromptRequestSchema, async (request) =>
-      federation.getPrompt(request.params.name, request.params.arguments),
-    );
-    server.setRequestHandler(ListResourcesRequestSchema, async () => federation.listResources());
-    server.setRequestHandler(ReadResourceRequestSchema, async (request) =>
-      federation.readResource(request.params.uri),
-    );
+  server.setRequestHandler(ListToolsRequestSchema, async () => federation.listTools());
+  server.setRequestHandler(CallToolRequestSchema, async (request) =>
+    federation.callTool(request.params.name, request.params.arguments as Record<string, unknown> | undefined),
+  );
+  server.setRequestHandler(ListPromptsRequestSchema, async () => federation.listPrompts());
+  server.setRequestHandler(GetPromptRequestSchema, async (request) =>
+    federation.getPrompt(request.params.name, request.params.arguments),
+  );
+  server.setRequestHandler(ListResourcesRequestSchema, async () => federation.listResources());
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) =>
+    federation.readResource(request.params.uri),
+  );
 
-    return server;
-  };
+  return server;
+};
 
-export const serveMcpStdio = async (config: FederationConfig, options: McpRuntimeOptions = {}): Promise<void> => {
+export const serveMcpStdio = async (
+  config: FederationConfig,
+  options: McpRuntimeOptions = {},
+): Promise<McpStdioSession> => {
   const federation = await McpFederation.fromConfig(config, createSdkClient, options);
   const server = createMcpServer(federation);
   await server.connect(new StdioServerTransport());
+
+  return {
+    close: async () => {
+      await Promise.allSettled([
+        server.close(),
+        federation.close(),
+      ]);
+    },
+  };
+};
+
+const closeResponseResources = async (
+  server: Server,
+  transport: WebStandardStreamableHTTPServerTransport,
+): Promise<void> => {
+  await Promise.allSettled([
+    transport.close(),
+    server.close(),
+  ]);
+};
+
+const responseWithCleanup = (
+  response: Response,
+  cleanup: () => Promise<void>,
+): Response => {
+  let cleaned = false;
+  const runCleanup = () => {
+    if (!cleaned) {
+      cleaned = true;
+      void cleanup();
+    }
+  };
+
+  if (!response.body) {
+    runCleanup();
+    return response;
+  }
+
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    pull: async (controller) => {
+      const result = await reader.read();
+
+      if (result.done) {
+        controller.close();
+        runCleanup();
+        return;
+      }
+
+      controller.enqueue(result.value);
+    },
+    cancel: async (reason) => {
+      await reader.cancel(reason);
+      runCleanup();
+    },
+  });
+
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 };
 
 export const createMcpHttpHandler = (
   config: FederationConfig,
   options: McpRuntimeOptions = {},
-): ((request: Request) => Promise<Response>) => {
+  createClient: McpClientFactory = createSdkClient,
+): McpHttpHandler => {
   let federationPromise: Promise<McpFederation> | undefined;
 
   const getFederation = async (): Promise<McpFederation> => {
     if (!federationPromise) {
-      federationPromise = McpFederation.fromConfig(config, createSdkClient, options);
+      federationPromise = McpFederation.fromConfig(config, createClient, options).catch((error) => {
+        federationPromise = undefined;
+        throw error;
+      });
     }
 
     return federationPromise;
   };
 
-  return async (request: Request): Promise<Response> => {
+  const handler = async (request: Request): Promise<Response> => {
     const federation = await getFederation();
     const server = createMcpServer(federation);
     const transport = new WebStandardStreamableHTTPServerTransport({
       enableJsonResponse: true,
     });
-    await server.connect(transport);
-    return transport.handleRequest(request);
+    const cleanup = () => closeResponseResources(server, transport);
+
+    try {
+      await server.connect(transport);
+      return responseWithCleanup(await transport.handleRequest(request), cleanup);
+    } catch (error) {
+      await cleanup();
+      throw error;
+    }
   };
+
+  handler.close = async (): Promise<void> => {
+    const federation = await federationPromise?.catch(() => undefined);
+    federationPromise = undefined;
+    await federation?.close();
+  };
+
+  return handler;
 };

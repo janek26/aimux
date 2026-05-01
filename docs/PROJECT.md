@@ -1,119 +1,126 @@
-# AI federation
+# Project Architecture
 
-Goal is to have a one stop shop to manage LLM endpoints and MCP servers and credentials or authentication. And reexpose it as a unified endpoint. You can find more details in the LLM and MCP sections
+AI Federation is a local control plane for AI tooling. It keeps provider and MCP server configuration in one YAML file, validates it, and exposes two gateway surfaces:
 
-## Config
+- An OpenAI-compatible LLM gateway at `/v1/models` and `/v1/chat/completions`.
+- A federated MCP gateway over Streamable HTTP or stdio.
 
-Everything gets stored in a shareable .mcp-federation.yml
-It should be global (in user home dir) or in the project, the program should always use the closest config file going up, if non gets detected, it should ask where to create one (current dir or user dir)
+The project is intentionally a Bun-first TypeScript CLI. The code favors small modules with explicit data flow over framework abstractions.
 
-## LLM
+## Design Goals
 
-It should be easy to add and remove LLM endpoints. Either by specifing the schema (OpenAI compatible, Antropic compatible etc) and providing endpoint and token or by selecting from an existing list (create it with the most common providers) and providing token. Token can be optional by provider, ie local providers dont need it.
+- Make one local endpoint usable by many AI tools.
+- Keep provider definitions single-sourced under `providers`.
+- Keep route config declarative and easy to review.
+- Validate configuration before persisting changes that depend on live services.
+- Persist only long-lived credentials required to run later.
+- Keep generated client config and local credentials out of git.
 
-The cli command to add this should ie look like:
+## Config Model
 
-```
-ai-fed llm add
-```
+The CLI reads `.mcp-federation.yml` or `.mcp-federation.yaml`. Lookup starts in the current directory, walks upward, and finally checks the user's home directory.
 
-this would guide the user through an cli flow to edit the config like
+The config has three top-level sections:
 
-```
+```yaml
 providers:
-  added-provider:
+  openai-prod:
     preset: openai
-    token: apikey
-  added-provider-2:
-    preset: openai
-    token: apikey
-  custom-provider:
-    schema: openai
-    url: <url>
-    token: apikey
+    token: <OPENAI_API_KEY>
 
 llm:
-  custom/prod: # allows for remapping a model too
-    provider: added-provider
-    model: gpt5
-  fallback: # fallback passes provided models through
-    - provider: added-provider-2
-    - provider: custom-provider
-      model_whitelist: ["deepseek-v4"] # allow optional whitelist OR model_blacklist, not prompted for
-```
+  custom/prod:
+    provider: openai-prod
+    model: gpt-4o
+  fallback:
+    - provider: openai-prod
 
-It should be possible to skip part or all of the interactive cli when providing the arguments like
-
-```
-ai-fed llm add fallback --name added-provider --preset openai --token apikey
-```
-
-Because of unique names, removing is as easy as 
-
-```
-ai-fed llm remove added-provider-2
-```
-
-Calling the service with the above config now should fallback for unknown models to the providers, until the first provider has that model.
-Calling the service with a custom model from the config (like custom/prod in this case) should call the specified provider and model.
-Provider definitions are stored once under `providers` and LLM routes only reference them by name. Removing a provider also removes routes that reference it.
-
-We need to make sure the common llm endpoint standards are supported, like http streaming and all that. It should not feel different from using the underlying provider directly.
-
-## MCP
-
-It should be easy to add and remove MCP servers and expose them as one MCP server, similar to the LLM endpoint. Adding an MCP can require authentication, in which case the cli should guide the user through it and only store the resulting auth data in the config. OAuth config should keep the access token and token type, plus refresh token and issued client id/secret when provided and needed for refresh; runtime details like redirect URLs, PKCE verifier, discovery cache, and client metadata should not be persisted.
-
-The cli command to add this should ie look like:
-
-```
-ai-fed mcp add
-```
-
-this would guide the user through an cli flow to edit the config like
-
-```
 mcp:
-  hugging-face:
-    transport: http
-    url: https://huggingface.co/mcp
-    headers:
-      Authorization: Bearer hf_token
-    method_whitelist: ["model_search"]
-    method_renames:
-      model_search: hf_model_search
-  linear:
-    transport: sse
-    url: https://mcp.linear.app/sse
-    headers:
-      Authorization: Bearer linear_token
   github:
     transport: stdio
     command: npx
     args: ["-y", "@modelcontextprotocol/server-github"]
-    env:
-      GITHUB_PERSONAL_ACCESS_TOKEN: gh_token
-  local-files:
-    transport: stdio
-    command: mcp-server-filesystem
-    args: ["."]
-    method_blacklist: ["delete_file"]
 ```
 
-It should be possible to skip part or all of the interactive cli when providing the arguments like
+`providers` contains reusable LLM provider definitions. `llm` maps public model names to providers or defines fallback routes. `mcp` contains upstream MCP servers plus optional method controls.
 
+## LLM Gateway
+
+LLM providers can be configured from presets or explicit schemas:
+
+```sh
+ai-fed llm add fallback --name openai --preset openai --token "$OPENAI_API_KEY"
+ai-fed llm add custom/prod --name openai --model gpt-4o
 ```
-ai-fed mcp add --transport http hugging-face https://huggingface.co/mcp
+
+Preset providers resolve to a schema and base URL in `src/llm/providers.ts`. Custom providers must specify a schema and URL.
+
+Routing behavior:
+
+- Direct model routes such as `custom/prod` call the configured provider and upstream model.
+- Fallback routes try providers in order until a provider can serve the requested model.
+- `model_whitelist` allows a fallback provider to accept known models without probing `/models`.
+- `model_blacklist` prevents a fallback provider from receiving selected models.
+- OpenAI-compatible responses and streaming bodies are proxied without buffering.
+- OpenAI-compatible multimodal, tool-call, structured-output, and provider-specific fields are passed through unchanged except for model remapping.
+- Anthropic requests are adapted through the Messages API and normalized back into OpenAI-compatible non-streaming text responses.
+- Anthropic streaming is proxied as returned by Anthropic; full Anthropic multimodal and tool-use normalization is future work.
+
+## MCP Gateway
+
+MCP servers can use `stdio`, `http`, or `sse` transports:
+
+```sh
+ai-fed mcp add github \
+  --transport stdio \
+  --command npx \
+  --args "-y,@modelcontextprotocol/server-github"
 ```
 
-Because of unique names, removing is as easy as
+Remote MCP servers can use static headers or OAuth. During interactive setup, the CLI attempts MCP OAuth first, then falls back to manual bearer-token or custom-header setup when needed.
 
+Persisted OAuth data is deliberately minimal:
+
+- `access_token`
+- `token_type`
+- `refresh_token` when issued
+- issued client metadata required for refresh
+
+Runtime-only details such as redirect URLs, PKCE verifier state, discovery cache, and temporary callback server state are not persisted.
+
+Method controls are applied per upstream server:
+
+- `method_whitelist` exposes only selected tools/prompts.
+- `method_blacklist` hides selected tools/prompts.
+- `method_renames` changes the exposed names.
+- Name collisions are resolved by prefixing the duplicate with the upstream server name.
+
+## Module Boundaries
+
+- `src/cli.ts` parses commands, runs prompts, coordinates validation, and writes generated client config.
+- `src/config/types.ts` defines the public config shape.
+- `src/config/config.schema.json` is the machine-readable schema used by validation and tests.
+- `src/config/repository.ts` owns YAML loading, lookup, and writes.
+- `src/config/validation.ts` combines JSON Schema validation with cross-reference checks.
+- `src/core/config.ts` contains pure config transforms.
+- `src/llm` contains provider resolution, preflight checks, and HTTP proxy behavior.
+- `src/mcp` contains MCP client creation, OAuth persistence, method federation, and server adapters.
+- `test` covers schema rules, pure transforms, CLI flows, LLM behavior, MCP behavior, OAuth, and end-to-end CLI execution.
+
+## Release Checklist
+
+Before publishing a release:
+
+```sh
+bun install
+bun run check
+bun run build
 ```
-ai-fed mcp remove github
+
+Also verify that no local config or generated client config is staged:
+
+```sh
+git status --short
 ```
 
-Calling the exposed MCP server should list and call methods from all configured MCP servers. It should be possible to rename methods and select optional method_whitelist OR method_blacklist per server in the interactive cli.
-
-## Stack
-
-Everything should be done with typescript and bun as the runtime. This makes it super easy to ship as one binary. For CLI things it should use @clack/prompts and bun buildins. Also bun for tests. For config use cosmiconfig.
+The files `.mcp-federation.yml`, `opencode.json`, `.cursor/mcp.json`, `.zed/settings.json`, `.mcp.json`, `.codex/config.toml`, `.gemini/settings.json`, and `ai-fed` are ignored because they are local state or build output.

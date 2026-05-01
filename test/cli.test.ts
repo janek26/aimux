@@ -32,6 +32,22 @@ const server = new Server(
   { capabilities: { tools: {} } },
 );
 
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
+  await server.close().catch(() => undefined);
+  process.exit(0);
+};
+
+process.stdin.on("end", () => void shutdown());
+process.stdin.on("close", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
+process.on("SIGINT", () => void shutdown());
+
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [{ name: "echo", inputSchema: { type: "object" } }],
 }));

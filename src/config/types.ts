@@ -21,16 +21,25 @@ export type McpTransport = (typeof MCP_TRANSPORTS)[number];
 
 export type JsonObject = Record<string, unknown>;
 
-export type LlmProvider = {
-  preset?: LlmPreset;
+export type PresetLlmProvider = {
+  preset: LlmPreset;
   schema?: LlmSchema;
   url?: string;
   token?: string;
 };
 
+export type CustomLlmProvider = {
+  preset?: never;
+  schema: LlmSchema;
+  url: string;
+  token?: string;
+};
+
+export type LlmProvider = PresetLlmProvider | CustomLlmProvider;
+
 export type LlmRoute = {
   provider: string;
-  model?: string;
+  model: string;
 };
 
 export type LlmFallbackRoute = {
@@ -62,16 +71,29 @@ export type McpOAuthConfig = {
   client_secret_expires_at?: number;
 };
 
-export type McpServerConfig = MethodControls & {
-  transport: McpTransport;
-  command?: string;
+export type StdioMcpServerConfig = MethodControls & {
+  transport: "stdio";
+  command: string;
   args?: string[];
-  url?: string;
-  headers?: Record<string, string>;
   env?: Record<string, string>;
   cwd?: string;
-  oauth?: McpOAuthConfig;
+  url?: never;
+  headers?: never;
+  oauth?: never;
 };
+
+export type RemoteMcpServerConfig = MethodControls & {
+  transport: Exclude<McpTransport, "stdio">;
+  url: string;
+  headers?: Record<string, string>;
+  oauth?: McpOAuthConfig;
+  command?: never;
+  args?: never;
+  env?: never;
+  cwd?: never;
+};
+
+export type McpServerConfig = StdioMcpServerConfig | RemoteMcpServerConfig;
 
 export type FederationConfig = {
   providers?: Record<string, LlmProvider>;

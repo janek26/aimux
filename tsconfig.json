@@ -6,6 +6,11 @@
     "target": "ES2022",
     "resolveJsonModule": true,
     "types": ["bun-types"],
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noEmit": true
   },
   "include": ["src", "test"]

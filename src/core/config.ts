@@ -19,9 +19,18 @@ export type McpListItem = {
   server: McpServerConfig;
 };
 
+type LlmRouteOptions = {
+  model?: string;
+  model_whitelist?: string[];
+  model_blacklist?: string[];
+};
+
 const isFallbackTarget = (target: string): boolean => target === "fallback";
 
 export const createDefaultConfig = (): FederationConfig => ({});
+
+const getProvider = (config: FederationConfig, providerName: string): LlmProvider | undefined =>
+  config.providers?.[providerName];
 
 const withFallbackLast = (
   entries: Array<[string, LlmRoute]>,
@@ -36,27 +45,39 @@ export const listLlmProviders = (config: FederationConfig): LlmListItem[] => {
   const llm = config.llm ?? {};
   const mapped = Object.entries(llm)
     .filter(([target]) => !isFallbackTarget(target))
-    .flatMap(([target, value]) =>
-      value && !Array.isArray(value)
+    .flatMap(([target, value]) => {
+      if (!value || Array.isArray(value)) {
+        return [];
+      }
+
+      const provider = getProvider(config, value.provider);
+
+      return provider
         ? [
             {
               target,
               providerName: value.provider,
-              provider: config.providers?.[value.provider],
+              provider,
               route: value,
             },
           ]
-        : [],
-    )
-    .filter((item): item is LlmListItem => Boolean(item.provider));
+        : [];
+    });
   const fallback = (llm.fallback ?? [])
-    .map((route) => ({
-      target: "fallback",
-      providerName: route.provider,
-      provider: config.providers?.[route.provider],
-      route,
-    }))
-    .filter((item): item is LlmListItem => Boolean(item.provider));
+    .flatMap((route) => {
+      const provider = getProvider(config, route.provider);
+
+      return provider
+        ? [
+            {
+              target: "fallback",
+              providerName: route.provider,
+              provider,
+              route,
+            },
+          ]
+        : [];
+    });
 
   return [...mapped, ...fallback];
 };
@@ -91,8 +112,8 @@ export const addLlmProvider = (
   config: FederationConfig,
   target: string,
   providerName: string,
-  provider: LlmProvider,
-  routeOptions: Omit<LlmRoute & LlmFallbackRoute, "provider"> = {},
+  provider: LlmProvider | undefined,
+  routeOptions: LlmRouteOptions = {},
 ): FederationConfig => {
   if (!isFallbackTarget(target) && !routeOptions.model) {
     throw new Error("Custom LLM targets require an upstream model");
@@ -102,7 +123,7 @@ export const addLlmProvider = (
     ? config.llm[target]
     : undefined;
   const existingProvider = config.providers?.[providerName];
-  const hasProviderDetails = Object.keys(provider).length > 0;
+  const hasProviderDetails = Boolean(provider);
 
   if (existingProvider && hasProviderDetails && existingRoute?.provider !== providerName) {
     throw new Error(`LLM provider name already exists: ${providerName}`);
@@ -115,12 +136,18 @@ export const addLlmProvider = (
   if (!existingProvider) {
     assertUniqueProviderName(config, providerName, existingRoute?.provider);
   }
-  const route = {
-    ...routeOptions,
-    provider: providerName,
-  };
+  const nextProvider = existingProvider ?? provider;
+
+  if (!nextProvider) {
+    throw new Error(`Unknown LLM provider: ${providerName}`);
+  }
 
   if (isFallbackTarget(target)) {
+    const route: LlmFallbackRoute = {
+      provider: providerName,
+      model_whitelist: routeOptions.model_whitelist,
+      model_blacklist: routeOptions.model_blacklist,
+    };
     const nonFallbackEntries = Object.entries(config.llm ?? {}).flatMap(([key, value]) =>
       key !== "fallback" && value && !Array.isArray(value) ? ([[key, value]] as Array<[string, LlmRoute]>) : [],
     );
@@ -129,12 +156,22 @@ export const addLlmProvider = (
       ...config,
       providers: {
         ...(config.providers ?? {}),
-        [providerName]: existingProvider ?? provider,
+        [providerName]: nextProvider,
       },
       llm: withFallbackLast(nonFallbackEntries, [...(config.llm?.fallback ?? []), route]),
     };
   }
 
+  const model = routeOptions.model;
+
+  if (!model) {
+    throw new Error("Custom LLM targets require an upstream model");
+  }
+
+  const route: LlmRoute = {
+    provider: providerName,
+    model,
+  };
   const existingNonFallbackEntries = Object.entries(config.llm ?? {}).flatMap(([key, value]) =>
     key !== "fallback" && key !== target && value && !Array.isArray(value)
       ? ([[key, value]] as Array<[string, LlmRoute]>)
@@ -145,7 +182,7 @@ export const addLlmProvider = (
     ...config,
     providers: {
       ...(config.providers ?? {}),
-      [providerName]: existingProvider ?? provider,
+      [providerName]: nextProvider,
     },
     llm: withFallbackLast([[target, route], ...existingNonFallbackEntries], config.llm?.fallback),
   };

@@ -9,6 +9,7 @@ coverage/
 
 # Local configuration and secrets
 .mcp-federation.yml
+.mcp-federation.yaml
 .env
 .env.*
 !.env.example

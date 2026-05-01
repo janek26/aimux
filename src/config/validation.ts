@@ -13,7 +13,8 @@ type OutputUnit = {
   errors?: OutputUnit[];
 };
 
-const configSchema = configSchemaJson as unknown as ConfigSchema;
+const configSchemaValue: unknown = configSchemaJson;
+const configSchema = configSchemaValue as ConfigSchema;
 let compiledValidator: ValidateConfig | undefined;
 
 const flattenErrors = (errors: OutputUnit[] = []): OutputUnit[] =>
@@ -34,16 +35,14 @@ const formatErrors = (errors: unknown): string[] => {
   });
 };
 
+const configAsJson = (config: FederationConfig): Json => config as Json;
+
 const collectUnknownProviderReferences = (config: FederationConfig): string[] => {
   const llm = config.llm ?? {};
   const providerNames = new Set(Object.keys(config.providers ?? {}));
   const routeProviders = Object.entries(llm)
     .filter(([key]) => key !== "fallback")
-    .map(([, provider]) => provider)
-    .filter((provider): provider is { provider: string } => {
-      return typeof provider === "object" && provider !== null && "provider" in provider;
-    })
-    .map((provider) => provider.provider);
+    .flatMap(([, route]) => route && !Array.isArray(route) ? [route.provider] : []);
   const fallbackProviders = (llm.fallback ?? []).map((route) => route.provider);
 
   return [...routeProviders, ...fallbackProviders].filter((name) => !providerNames.has(name));
@@ -65,7 +64,7 @@ export class HyperjumpConfigValidator implements ConfigValidatorPort {
 
   async validate(config: FederationConfig): Promise<ValidationResult> {
     const validateConfig = await this.getValidator();
-    const schemaResult = validateConfig(config as unknown as Json, "DETAILED");
+    const schemaResult = validateConfig(configAsJson(config), "DETAILED");
     const unknownProviderReferences = [...new Set(collectUnknownProviderReferences(config))];
     const duplicateMcpNames = duplicateValues(Object.keys(config.mcp ?? {}));
 

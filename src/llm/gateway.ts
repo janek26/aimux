@@ -2,7 +2,7 @@ import type { FederationConfig, LlmFallbackRoute, LlmProvider } from "../config/
 import { listLlmProviders, listLlmRoutes } from "../core/config.js";
 import { assertProviderToken, resolveProvider, type ResolvedLlmProvider } from "./providers.js";
 
-type FetchLike = typeof fetch;
+export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 type ChatRequest = {
   model?: string;
@@ -26,6 +26,21 @@ const jsonHeaders = { "content-type": "application/json" };
 
 const joinUrl = (baseUrl: string, path: string): string =>
   `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+
+const isJsonObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const parseJsonObject = async (request: Request): Promise<Record<string, unknown> | undefined> => {
+  try {
+    const value = await request.json() as unknown;
+    return isJsonObject(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const contentTypeIsJson = (response: Response): boolean =>
+  response.headers.get("content-type")?.toLowerCase().includes("json") ?? false;
 
 const authHeaders = (provider: LlmProvider, schema = resolveProvider(provider).schema): HeadersInit => {
   if (!provider.token) {
@@ -193,7 +208,19 @@ export const proxyChatCompletion = async (
       });
     }
 
-    const body = await upstream.json();
+    if (!contentTypeIsJson(upstream)) {
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: upstream.headers,
+      });
+    }
+
+    const body = await upstream.json().catch(() => undefined);
+
+    if (body === undefined) {
+      return Response.json({ error: "Anthropic response was not valid JSON" }, { status: 502 });
+    }
+
     return Response.json(toOpenAiAnthropicResponse(body, route.model), { status: upstream.status });
   }
 
@@ -256,8 +283,8 @@ export const listFederatedModels = async (
         return [];
       }
 
-      const body = (await response.json()) as ModelList;
-      return (body.data ?? []).flatMap((item) =>
+      const body = await response.json().catch(() => undefined) as ModelList | undefined;
+      return (body?.data ?? []).flatMap((item) =>
         item.id
           ? [
               {
@@ -287,7 +314,13 @@ export const createLlmHttpHandler =
     }
 
     if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
-      return proxyChatCompletion(config, (await request.json()) as ChatRequest, fetcher);
+      const body = await parseJsonObject(request);
+
+      if (!body) {
+        return Response.json({ error: "Request body must be a valid JSON object" }, { status: 400 });
+      }
+
+      return proxyChatCompletion(config, body as ChatRequest, fetcher);
     }
 
     return Response.json({ error: "Not found" }, { status: 404 });

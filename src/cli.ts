@@ -11,11 +11,9 @@ import {
   MCP_TRANSPORTS,
   type FederationConfig,
   type LlmProvider,
-  type LlmPreset,
-  type LlmSchema,
   type McpOAuthConfig,
+  type RemoteMcpServerConfig,
   type McpServerConfig,
-  type McpTransport,
 } from "./config/types.js";
 import { createLlmHttpHandler } from "./llm/gateway.js";
 import { validateLlmProviderRoute } from "./llm/preflight.js";
@@ -74,7 +72,23 @@ const parseKeyValueMap = (value?: string | boolean): Record<string, string> | un
   return entries && entries.length > 0 ? Object.fromEntries(entries) : undefined;
 };
 
-const waitForever = (): Promise<never> => new Promise(() => undefined);
+const waitForShutdown = (cleanup: () => void | Promise<void>): Promise<never> =>
+  new Promise(() => {
+    let shuttingDown = false;
+    const shutdown = () => {
+      if (shuttingDown) {
+        return;
+      }
+
+      shuttingDown = true;
+      process.off("SIGINT", shutdown);
+      process.off("SIGTERM", shutdown);
+      void Promise.resolve(cleanup()).finally(() => process.exit(0));
+    };
+
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+  });
 
 const LLM_MCP_IDLE_TIMEOUT_SECONDS = 255;
 
@@ -170,12 +184,20 @@ export const parseArgs = (argv: string[]): ParsedArgs => {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
 
+    if (!arg) {
+      continue;
+    }
+
     if (!arg.startsWith("--")) {
       result.command.push(arg);
       continue;
     }
 
     const [rawKey, inlineValue] = arg.slice(2).split("=", 2);
+
+    if (!rawKey) {
+      continue;
+    }
 
     if (inlineValue !== undefined) {
       result.flags[rawKey] = inlineValue;
@@ -429,7 +451,7 @@ const toolGenerators: Record<GeneratedToolName, ToolGenerator> = {
   cursor: {
     name: "cursor",
     outputPath: ".cursor/mcp.json",
-    write: async ({ outputPath, config, port }) => {
+    write: async ({ outputPath, port }) => {
       await writeMergedJsonObject(outputPath, {
         mcpServers: {
           "ai-fed": cursorMcpServerJson(port),
@@ -476,7 +498,7 @@ const toolGenerators: Record<GeneratedToolName, ToolGenerator> = {
   "claude-code": {
     name: "claude-code",
     outputPath: ".mcp.json",
-    write: async ({ outputPath, config, port }) => {
+    write: async ({ outputPath, port }) => {
       await writeMergedJsonObject(outputPath, {
         mcpServers: {
           "ai-fed": mcpServerJson(port),
@@ -513,7 +535,7 @@ const toolGenerators: Record<GeneratedToolName, ToolGenerator> = {
   "gemini-cli": {
     name: "gemini-cli",
     outputPath: ".gemini/settings.json",
-    write: async ({ outputPath, config, port }) => {
+    write: async ({ outputPath, port }) => {
       await writeMergedJsonObject(outputPath, {
         mcpServers: {
           "ai-fed": {
@@ -736,7 +758,7 @@ const assertEnum = <T extends string>(value: string | undefined, values: readonl
 const collectLlmProvider = async (args: ParsedArgs, config: FederationConfig): Promise<{
   target: string;
   providerName: string;
-  provider: LlmProvider;
+  provider: LlmProvider | undefined;
   routeOptions: { model?: string; model_whitelist?: string[]; model_blacklist?: string[] };
 }> => {
   const [targetArg] = args.command.slice(2);
@@ -796,12 +818,20 @@ const collectLlmProvider = async (args: ParsedArgs, config: FederationConfig): P
   return {
     target,
     providerName: name,
-    provider: existingProvider && !hasProviderFlags ? {} : {
-      preset: selectedPreset as LlmPreset | undefined,
-      schema: selectedSchema as LlmSchema | undefined,
-      url,
-      token,
-    },
+    provider: existingProvider && !hasProviderFlags
+      ? undefined
+      : selectedPreset
+        ? {
+            preset: selectedPreset,
+            token,
+          }
+        : selectedSchema && url
+          ? {
+              schema: selectedSchema,
+              url,
+              token,
+            }
+          : undefined,
     routeOptions: {
       model,
       model_whitelist: parseCsv(args.flags["model-whitelist"]),
@@ -957,7 +987,10 @@ const validateMcpAddConfig = async (name: string, server: McpServerConfig): Prom
   return server;
 };
 
-const validateMcpWithManualAuth = async (name: string, server: McpServerConfig): Promise<McpServerConfig> => {
+const validateMcpWithManualAuth = async (
+  name: string,
+  server: RemoteMcpServerConfig,
+): Promise<RemoteMcpServerConfig> => {
   const method = await requireSelection(
     select({
       message: "How should ai-fed authenticate to this MCP server?",
@@ -996,8 +1029,11 @@ const validateMcpWithManualAuth = async (name: string, server: McpServerConfig):
   return authenticatedServer;
 };
 
-const runMcpOAuthSetup = async (name: string, server: McpServerConfig): Promise<McpServerConfig> => {
-  if (!server.url || server.transport === "stdio") {
+const runMcpOAuthSetup = async (
+  name: string,
+  server: RemoteMcpServerConfig,
+): Promise<RemoteMcpServerConfig> => {
+  if (!server.url) {
     throw new Error("OAuth setup requires a remote MCP URL");
   }
 
@@ -1124,15 +1160,15 @@ const validateConfigPreflight = async (config: FederationConfig): Promise<Federa
     }
   }
 
-  const mcpEntries = await Promise.all(
-    Object.entries(config.mcp ?? {}).map(async ([name, server]) => {
-      try {
-        return [name, await validateMcpAddConfig(name, server)] as const;
-      } catch (error) {
-        throw new Error(`MCP ${name} failed validation: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }),
-  );
+  const mcpEntries: Array<readonly [string, McpServerConfig]> = [];
+
+  for (const [name, server] of Object.entries(config.mcp ?? {})) {
+    try {
+      mcpEntries.push([name, await validateMcpAddConfig(name, server)] as const);
+    } catch (error) {
+      throw new Error(`MCP ${name} failed validation: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   return mcpEntries.length > 0
     ? {
@@ -1349,7 +1385,7 @@ export const runCli = async (argv: string[], context: CliContext = {
       const llmHandler = createLlmHttpHandler(location.config);
       const mcpHandler = createMcpHttpHandler(location.config, { onOAuthUpdate: persistOAuthUpdate });
 
-      Bun.serve({
+      const server = Bun.serve({
         port,
         idleTimeout: LLM_MCP_IDLE_TIMEOUT_SECONDS,
         fetch: withHttpDebugLogging("serve", (request) => {
@@ -1363,7 +1399,10 @@ export const runCli = async (argv: string[], context: CliContext = {
         }, context.stderr),
       });
       context.stdout(formatCombinedServeDetails(port));
-      await waitForever();
+      await waitForShutdown(async () => {
+        server.stop(true);
+        await mcpHandler.close();
+      });
     }
 
     if (domain === "serve" && action === "llm") {
@@ -1374,13 +1413,13 @@ export const runCli = async (argv: string[], context: CliContext = {
       }
 
       const port = Number(stringFlag(args.flags, "port") ?? 8787);
-      Bun.serve({
+      const server = Bun.serve({
         port,
         idleTimeout: LLM_MCP_IDLE_TIMEOUT_SECONDS,
         fetch: withHttpDebugLogging("serve:llm", createLlmHttpHandler(location.config), context.stderr),
       });
       context.stdout(formatLlmServeDetails(port));
-      await waitForever();
+      await waitForShutdown(() => server.stop(true));
     }
 
     if (domain === "serve" && action === "mcp") {
@@ -1399,8 +1438,8 @@ export const runCli = async (argv: string[], context: CliContext = {
       await validateMcpServersForServe(location.config, persistOAuthUpdate);
       await persistOAuthUpdate();
       context.stderr(formatMcpStdioServeDetails());
-      await serveMcpStdio(location.config, { onOAuthUpdate: persistOAuthUpdate });
-      await waitForever();
+      const session = await serveMcpStdio(location.config, { onOAuthUpdate: persistOAuthUpdate });
+      await waitForShutdown(() => session.close());
     }
 
     throw new Error(`Unknown command: ${args.command.join(" ")}`);
