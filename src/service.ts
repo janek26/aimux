@@ -24,6 +24,10 @@ type ServiceContext = {
   stdout: (message: string) => void;
 };
 
+type ServiceUninstallResult = {
+  wasInstalled: boolean;
+};
+
 const defaultServicePort = 8787;
 
 const isBunFsPath = (path?: string): boolean =>
@@ -227,10 +231,28 @@ const runProcess = async (
   return { exitCode, stdout, stderr };
 };
 
+const processOutput = (result: { stdout: string; stderr: string }): string =>
+  [result.stderr, result.stdout].filter((value) => value.trim().length > 0).join("\n");
+
+const assertUserServiceScope = (): void => {
+  if (process.getuid?.() === 0) {
+    throw new Error("AIMux services are installed as user-level services. Run this command without sudo.");
+  }
+};
+
 const installServiceDefinition = async (definition: ServiceDefinition): Promise<void> => {
   await mkdir(dirname(definition.serviceFilePath), { recursive: true });
   await mkdir(dirname(definition.logPath), { recursive: true });
   await Bun.write(definition.serviceFilePath, definition.content);
+
+  if (definition.platform === "darwin") {
+    await clearMacServiceFileAttributes(definition.serviceFilePath);
+  }
+};
+
+const clearMacServiceFileAttributes = async (path: string): Promise<void> => {
+  await runProcess("xattr", ["-d", "com.apple.quarantine", path], { allowFailure: true });
+  await runProcess("xattr", ["-d", "com.apple.provenance", path], { allowFailure: true });
 };
 
 const serviceDefinitionForContext = (context: ServiceContext): ServiceDefinition => {
@@ -256,6 +278,8 @@ const loadServiceConfig = async (path: string, context: ServiceContext): Promise
 };
 
 export const runServiceAction = async (action: string, context: ServiceContext, path?: string): Promise<void> => {
+  assertUserServiceScope();
+
   const definition = serviceDefinitionForContext(context);
 
   if (action === "load") {
@@ -300,9 +324,9 @@ export const runServiceAction = async (action: string, context: ServiceContext, 
   }
 
   if (action === "uninstall") {
-    await uninstallService(definition);
-    context.stdout(`AIMux service uninstall complete`);
-    context.stdout(`Removed service file: ${definition.serviceFilePath}`);
+    const result = await uninstallService(definition);
+    context.stdout(result.wasInstalled ? `AIMux service uninstall complete` : `AIMux service was not installed`);
+    context.stdout(result.wasInstalled ? `Removed service file: ${definition.serviceFilePath}` : `No service file found at: ${definition.serviceFilePath}`);
     context.stdout(`Logs kept at: ${definition.logPath}`);
     context.stdout(`Config kept at: ${serviceConfigPath()}`);
     return;
@@ -314,8 +338,8 @@ export const runServiceAction = async (action: string, context: ServiceContext, 
     } else if (action === "stop") {
       await stopMacService(definition);
     } else if (action === "enable") {
-      await startMacService(definition);
       await runProcess("launchctl", ["enable", macServiceTarget(definition)], { allowFailure: true });
+      await startMacService(definition);
     } else if (action === "disable") {
       await runProcess("launchctl", ["disable", macServiceTarget(definition)], { allowFailure: true });
       await stopMacService(definition);
@@ -362,7 +386,17 @@ const startMacService = async (definition: ServiceDefinition): Promise<void> => 
   const domain = macServiceDomain(definition);
 
   await stopMacService(definition);
-  await runProcess("launchctl", ["bootstrap", domain, definition.serviceFilePath]);
+  const bootstrap = await runProcess("launchctl", ["bootstrap", domain, definition.serviceFilePath], { allowFailure: true });
+
+  if (bootstrap.exitCode !== 0) {
+    const loaded = await runProcess("launchctl", ["print", serviceTarget], { allowFailure: true });
+
+    if (loaded.exitCode !== 0) {
+      const details = processOutput(bootstrap);
+      throw new Error(details.length > 0 ? details : `launchctl bootstrap failed with exit code ${bootstrap.exitCode}`);
+    }
+  }
+
   await runProcess("launchctl", ["kickstart", "-k", serviceTarget]);
 };
 
@@ -376,19 +410,22 @@ const restartService = async (definition: ServiceDefinition): Promise<void> => {
   await runProcess("systemctl", ["--user", "restart", definition.serviceName]);
 };
 
-const uninstallService = async (definition: ServiceDefinition): Promise<void> => {
+const uninstallService = async (definition: ServiceDefinition): Promise<ServiceUninstallResult> => {
   if (definition.platform === "darwin") {
-    await uninstallMacService(definition);
-    return;
+    return uninstallMacService(definition);
   }
 
+  const serviceFileExists = await Bun.file(definition.serviceFilePath).exists();
   await runProcess("systemctl", ["--user", "disable", "--now", definition.serviceName], { allowFailure: true });
   await rm(definition.serviceFilePath, { force: true });
   await runProcess("systemctl", ["--user", "daemon-reload"], { allowFailure: true });
+
+  return { wasInstalled: serviceFileExists };
 };
 
-const uninstallMacService = async (definition: ServiceDefinition): Promise<void> => {
+const uninstallMacService = async (definition: ServiceDefinition): Promise<ServiceUninstallResult> => {
   const loaded = await runProcess("launchctl", ["print", macServiceTarget(definition)], { allowFailure: true });
+  const serviceFileExists = await Bun.file(definition.serviceFilePath).exists();
 
   await runProcess("launchctl", ["disable", macServiceTarget(definition)], { allowFailure: true });
 
@@ -397,4 +434,6 @@ const uninstallMacService = async (definition: ServiceDefinition): Promise<void>
   }
 
   await rm(definition.serviceFilePath, { force: true });
+
+  return { wasInstalled: loaded.exitCode === 0 || serviceFileExists };
 };
