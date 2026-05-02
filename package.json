@@ -10,10 +10,10 @@
     "registry": "https://registry.npmjs.org/"
   },
   "bin": {
-    "aimux": "./src/cli.ts"
+    "aimux": "./dist/cli.js"
   },
   "files": [
-    "src",
+    "dist",
     "README.md",
     "LICENSE",
     ".aimux.example.yml"
@@ -31,7 +31,9 @@
   "scripts": {
     "assert:ci-publish": "node -e \"if (process.env.GITHUB_ACTIONS !== 'true') { console.error('Publishing is only allowed from GitHub Actions via semantic-release.'); process.exit(1); }\"",
     "build": "bun build ./src/cli.ts --compile --outfile aimux",
+    "build:npm": "bun build ./src/cli.ts --target=bun --outfile dist/cli.js",
     "check": "bun run typecheck && bun test",
+    "prepack": "bun run build:npm",
     "prepublishOnly": "bun run assert:ci-publish && bun run check && bun run build",
     "release": "semantic-release",
     "test": "bun test",

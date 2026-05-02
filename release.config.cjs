@@ -12,7 +12,7 @@ module.exports = {
     [
       "@semantic-release/github",
       {
-        failComment: false,
+        failCommentCondition: false,
       },
     ],
   ],
