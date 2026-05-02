@@ -21,6 +21,7 @@ import { createLlmHttpHandler } from "./llm/gateway.js";
 import { validateLlmProviderRoute } from "./llm/preflight.js";
 import { createMcpHttpHandler, listMcpMethodNames, McpAuthError, serveMcpStdio, validateMcpServerConfig } from "./mcp/gateway.js";
 import { ConfigOAuthClientProvider, createOAuthMetadata } from "./mcp/oauth.js";
+import { runServiceAction } from "./service.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -52,6 +53,14 @@ Commands:
   aimux mcp add [name] [url] --transport <stdio|http|sse> [--command <command>]
   aimux mcp remove <name>
   aimux mcp list
+  aimux service start
+  aimux service stop
+  aimux service restart
+  aimux service logs
+  aimux service load <path>
+  aimux service enable
+  aimux service disable
+  aimux service uninstall
   aimux serve [--port <port>] [--frozen]
   aimux serve llm [--port <port>]
   aimux serve mcp [--frozen]
@@ -1511,6 +1520,15 @@ export const runCli = async (argv: string[], context: CliContext = {
       const location = await readConfigFrom(repository, context.cwd);
       const output = location ? formatMcpList(location.config) : "";
       context.stdout(output.length > 0 ? output : "No MCP servers configured");
+      return 0;
+    }
+
+    if (domain === "service") {
+      if (!action || !["start", "stop", "restart", "logs", "load", "enable", "disable", "uninstall"].includes(action)) {
+        throw new Error("Service command must be one of: start, stop, restart, logs, load, enable, disable, uninstall");
+      }
+
+      await runServiceAction(action, context, args.command[2]);
       return 0;
     }
 

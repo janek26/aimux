@@ -107,6 +107,17 @@ Method controls are applied per upstream server:
 - `src/mcp` contains MCP client creation, OAuth persistence, method mux, and server adapters.
 - `test` covers schema rules, pure transforms, CLI flows, LLM behavior, MCP behavior, OAuth, and end-to-end CLI execution.
 
+## Service Management
+
+`aimux service enable` installs a user-level service, enables it, and starts `aimux serve` with the user's home directory as its working directory. That makes the service use the user-scoped config at `~/.aimux.yml`. `aimux service load <path>` copies a config file to that location and restarts the service. `aimux service start` installs and starts the same service without enabling autostart; `restart`, `stop`, `disable`, `uninstall`, and `logs` manage the installed service. Uninstall removes only the service definition and leaves logs plus `~/.aimux.yml` in place.
+
+Service backends are intentionally native:
+
+- macOS uses a LaunchAgent at `~/Library/LaunchAgents/dev.aimux.plist`.
+- Linux uses a systemd user unit at `~/.config/systemd/user/aimux.service`.
+
+Both definitions append stdout and stderr to a stable AIMux log file so the one-time endpoint banner from `aimux serve` is available through `aimux service logs`.
+
 ## Release Checklist
 
 Before publishing a release:

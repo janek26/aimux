@@ -109,9 +109,16 @@ bun src/cli.ts llm list
 bun src/cli.ts llm remove <provider-name>
 bun src/cli.ts mcp list
 bun src/cli.ts mcp remove <server-name>
+bun src/cli.ts service enable
+bun src/cli.ts service restart
+bun src/cli.ts service load ./path/to/config.yml
+bun src/cli.ts service logs
+bun src/cli.ts service uninstall
 ```
 
 `setup` and `config validate` run schema validation plus live LLM/MCP preflight checks. OAuth refreshes update `.aimux.yml`; pass `--frozen` to `serve` or `serve mcp` to keep the config file unchanged.
+
+`service enable` installs a user-level service if needed, enables it, and starts `aimux serve` on macOS LaunchAgent or Linux systemd. The service runs against the user-scoped config at `~/.aimux.yml`; `service load <path>` copies a config there and restarts the service. `service start`, `service stop`, `service restart`, `service disable`, `service uninstall`, and `service logs` manage that same service. The service writes startup endpoints and request logs to `~/Library/Logs/aimux/aimux.log` on macOS or `~/.local/state/aimux/aimux.log` on Linux.
 
 ## Configuration
 

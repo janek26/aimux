@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mergeJsoncObjectContent, mergeZedGlobalSettingsContent, parseArgs, runCli } from "../src/cli.js";
 import { YamlConfigRepository } from "../src/config/repository.js";
+import { createServiceDefinition, resolveServiceCliInvocation, serviceConfigPath } from "../src/service.js";
 
 const projectRoot = new URL("..", import.meta.url).pathname;
 const tempDirs: string[] = [];
@@ -511,5 +512,65 @@ mcp:
     expect(parsed.language_models.openai_compatible["AIMux"].api_url).toBe("http://localhost:9999/v1");
     expect(parsed.language_models.openai_compatible["AIMux"].available_models.map((model: { name: string }) => model.name))
       .toEqual(["custom/prod"]);
+  });
+
+  test("renders a macOS LaunchAgent service for aimux serve", () => {
+    const definition = createServiceDefinition(
+      "darwin",
+      "/Users/example",
+      "/Users/example",
+      { command: "/Users/example/project/aimux", args: [] },
+    );
+
+    expect(definition.serviceFilePath).toBe("/Users/example/Library/LaunchAgents/dev.aimux.plist");
+    expect(definition.logPath).toBe("/Users/example/Library/Logs/aimux/aimux.log");
+    expect(definition.content).toContain("<string>dev.aimux</string>");
+    expect(definition.content).toContain("<string>/Users/example/project/aimux</string>");
+    expect(definition.content).toContain("<string>serve</string>");
+    expect(definition.content).toContain("<string>--port</string>");
+    expect(definition.content).toContain("<string>8787</string>");
+    expect(definition.content).toContain("<key>WorkingDirectory</key>");
+    expect(definition.content).toContain("<string>/Users/example</string>");
+    expect(definition.content).toContain("<key>StandardOutPath</key>");
+    expect(definition.content).toContain("<key>StandardErrorPath</key>");
+  });
+
+  test("renders a Linux user systemd service for aimux serve", () => {
+    const definition = createServiceDefinition(
+      "linux",
+      "/home/example",
+      "/home/example",
+      { command: "/home/example/project/aimux", args: [] },
+    );
+
+    expect(definition.serviceFilePath).toBe("/home/example/.config/systemd/user/aimux.service");
+    expect(definition.logPath).toBe("/home/example/.local/state/aimux/aimux.log");
+    expect(definition.content).toContain("Description=AIMux local LLM and MCP gateway");
+    expect(definition.content).toContain("WorkingDirectory=/home/example");
+    expect(definition.content).toContain("ExecStart='/home/example/project/aimux' 'serve' '--port' '8787'");
+    expect(definition.content).toContain("StandardOutput=append:/home/example/.local/state/aimux/aimux.log");
+    expect(definition.content).toContain("WantedBy=default.target");
+  });
+
+  test("uses the home-scoped config path for services", () => {
+    expect(serviceConfigPath("/Users/example")).toBe("/Users/example/.aimux.yml");
+  });
+
+  test("resolves packaged BunFS service invocations to the aimux binary", () => {
+    const invocation = resolveServiceCliInvocation(
+      "/Users/example",
+      "/Users/example/.bun/bin/bun",
+      "/$bunfs/root/aimux",
+      (command) => command === "aimux" ? "/Users/example/.bun/bin/aimux" : undefined,
+    );
+
+    expect(invocation).toEqual({
+      command: "/Users/example/.bun/bin/aimux",
+      args: [],
+    });
+  });
+
+  test("accepts service uninstall as a documented service command", () => {
+    expect(parseArgs(["service", "uninstall"]).command).toEqual(["service", "uninstall"]);
   });
 });
