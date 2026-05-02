@@ -4,25 +4,9 @@
 [![CI](https://github.com/janek26/aimux/actions/workflows/ci.yml/badge.svg)](https://github.com/janek26/aimux/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-black.svg)](LICENSE)
 
-<p align="center">
-  <a href="https://x.com/levelsio/status/2050244383845318786">
-    <img src="docs/x.png" alt="@levelsio tweet about model churn" width="760">
-  </a>
-</p>
-
-<p align="center">
-  <sub>Source: <a href="https://x.com/levelsio/status/2050244383845318786">@levelsio on X</a></sub>
-</p>
-
 AI tools all want their own provider config, model names, MCP servers, and local files. aimux keeps that moving target in one config and exposes it as one local gateway: OpenAI-compatible `/v1` for models, plus one muxed MCP endpoint for tools.
 
 Use the same local AI stack across Cursor, Zed, Claude Code, Codex, Gemini CLI, OpenCode, and anything else that speaks OpenAI or MCP.
-
-## Demo
-
-<p align="center">
-  <img src="docs/demo.gif" alt="aimux demo" width="480">
-</p>
 
 ## Features
 
@@ -31,6 +15,12 @@ Use the same local AI stack across Cursor, Zed, Claude Code, Codex, Gemini CLI, 
 - One MCP gateway that muxes tools, prompts, and resources from many servers.
 - Client config generation for common AI coding tools.
 - User service management for macOS LaunchAgent and Linux systemd.
+
+## Demo
+
+<p align="center">
+  <img src="docs/demo.gif" alt="aimux demo" width="480">
+</p>
 
 ## Quick Start
 
