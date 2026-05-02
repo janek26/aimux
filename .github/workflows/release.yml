@@ -42,6 +42,9 @@ jobs:
       - name: Check
         run: bun run check
 
+      - name: Build npm package
+        run: bun run build:npm
+
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

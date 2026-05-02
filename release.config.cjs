@@ -4,7 +4,7 @@ const repositoryUrl = process.env.GITHUB_REPOSITORY
 
 module.exports = {
   branches: ["main"],
-  tagFormat: "@janek26/aimux@${version}",
+  tagFormat: "npm-v${version}",
   ...(repositoryUrl ? { repositoryUrl } : {}),
   plugins: [
     "@semantic-release/commit-analyzer",
