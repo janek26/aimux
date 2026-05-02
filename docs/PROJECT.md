@@ -1,6 +1,6 @@
 # Project Architecture
 
-AIMux is a local control plane for AI tooling. It keeps provider and MCP server configuration in one YAML file, validates it, and exposes two gateway surfaces:
+aimux is a local control plane for AI tooling. It keeps provider and MCP server configuration in one YAML file, validates it, and exposes two gateway surfaces:
 
 - An OpenAI-compatible LLM gateway at `/v1/models` and `/v1/chat/completions`.
 - A muxed MCP gateway over Streamable HTTP or stdio.
@@ -116,7 +116,7 @@ Service backends are intentionally native:
 - macOS uses a LaunchAgent at `~/Library/LaunchAgents/dev.aimux.plist`.
 - Linux uses a systemd user unit at `~/.config/systemd/user/aimux.service`.
 
-Both definitions append stdout and stderr to a stable AIMux log file so the one-time endpoint banner from `aimux serve` is available through `aimux service logs`.
+Both definitions append stdout and stderr to a stable aimux log file so the one-time endpoint banner from `aimux serve` is available through `aimux service logs`.
 
 ## Release Checklist
 
@@ -138,4 +138,4 @@ The files `.aimux.yml`, `opencode.json`, `.cursor/mcp.json`, `.zed/settings.json
 
 ## Client Config Notes
 
-Zed only supports `language_models` in the global user settings file for now. The generator writes project-local `.zed/settings.json` for MCP `context_servers`, and in interactive sessions asks before writing `language_models.openai_compatible["AIMux"]` plus `agent.default_model`/`agent.inline_assistant_model` to `~/.config/zed/settings.json`.
+Zed only supports `language_models` in the global user settings file for now. The generator writes project-local `.zed/settings.json` for MCP `context_servers`, and in interactive sessions asks before writing `language_models.openai_compatible["aimux"]` plus `agent.default_model`/`agent.inline_assistant_model` to `~/.config/zed/settings.json`.

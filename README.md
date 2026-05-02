@@ -1,4 +1,4 @@
-# AIMux
+# aimux
 
 [![npm version](https://img.shields.io/npm/v/@janek26/aimux.svg)](https://www.npmjs.com/package/@janek26/aimux)
 [![CI](https://github.com/janek26/aimux/actions/workflows/ci.yml/badge.svg)](https://github.com/janek26/aimux/actions/workflows/ci.yml)
@@ -14,14 +14,14 @@
   <sub>Source: <a href="https://x.com/levelsio/status/2050244383845318786">@levelsio on X</a></sub>
 </p>
 
-AI tools all want their own provider config, model names, MCP servers, and local files. AIMux keeps that moving target in one config and exposes it as one local gateway: OpenAI-compatible `/v1` for models, plus one muxed MCP endpoint for tools.
+AI tools all want their own provider config, model names, MCP servers, and local files. aimux keeps that moving target in one config and exposes it as one local gateway: OpenAI-compatible `/v1` for models, plus one muxed MCP endpoint for tools.
 
 Use the same local AI stack across Cursor, Zed, Claude Code, Codex, Gemini CLI, OpenCode, and anything else that speaks OpenAI or MCP.
 
 ## Demo
 
 <p align="center">
-  <img src="docs/demo.gif" alt="AIMux demo" width="480">
+  <img src="docs/demo.gif" alt="aimux demo" width="480">
 </p>
 
 ## Features
@@ -46,7 +46,7 @@ aimux serve --port 8787
 
 After installing globally, use `aimux` directly. `bunx aimux help` also works once the global binary is on your `PATH`.
 
-Then use AIMux like an OpenAI-compatible API:
+Then use aimux like an OpenAI-compatible API:
 
 ```sh
 curl http://localhost:8787/v1/models
@@ -80,7 +80,7 @@ aimux generate all
 
 Targets: `opencode`, `cursor`, `zed`, `claude-code`, `codex`, and `gemini-cli`.
 
-Generated client config is local machine state and is ignored by git. Zed currently reads `language_models` only from `~/.config/zed/settings.json`; AIMux writes project-local Zed MCP config and asks before updating global Zed model settings.
+Generated client config is local machine state and is ignored by git. Zed currently reads `language_models` only from `~/.config/zed/settings.json`; aimux writes project-local Zed MCP config and asks before updating global Zed model settings.
 
 ## Service
 

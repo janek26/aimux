@@ -253,7 +253,7 @@ const formatCombinedServeDetails = (port: number): string => {
   const origin = serverOrigin(port);
 
   return [
-    `AIMux serving on ${origin}`,
+    `aimux serving on ${origin}`,
     `LLM base URL: ${origin}/v1`,
     `LLM models URL: ${origin}/v1/models`,
     `LLM chat completions URL: ${origin}/v1/chat/completions`,
@@ -463,7 +463,7 @@ const zedLanguageModelConfig = (models: string[], port: number): Record<string, 
 });
 
 const zedAgentModelConfig = (model: string): Record<string, unknown> => ({
-  provider: "AIMux",
+  provider: "aimux",
   model,
   enable_thinking: false,
 });
@@ -484,7 +484,7 @@ export const mergeZedGlobalSettingsContent = (
     (current: string) => mergeJsoncValueContent(
       path,
       current,
-      ["language_models", "openai_compatible", "AIMux"],
+      ["language_models", "openai_compatible", "aimux"],
       zedLanguageModelConfig(models, port),
     ),
     (current: string) => mergeJsoncValueContent(
@@ -528,9 +528,9 @@ const maybeWriteZedGlobalLanguageModels = async (models: string[], port: number)
   const path = zedGlobalSettingsPath();
   const approved = await requireSelection(
     select({
-      message: `Zed only reads language_models from ${path}. Update global Zed settings and set AIMux as the agent model?`,
+      message: `Zed only reads language_models from ${path}. Update global Zed settings and set aimux as the agent model?`,
       options: [
-        { label: "Yes, add AIMux globally and enable it for Zed Agent", value: "yes" },
+        { label: "Yes, add aimux globally and enable it for Zed Agent", value: "yes" },
         { label: "No, write local MCP config only", value: "no" },
       ],
     }),
@@ -593,7 +593,7 @@ const toolGenerators: Record<GeneratedToolName, ToolGenerator> = {
         ? {
             "aimux": {
               npm: "@ai-sdk/openai-compatible",
-              name: "Local AIMux",
+              name: "Local aimux",
               options: {
                 baseURL: llmBaseUrl(port),
               },
@@ -675,7 +675,7 @@ const toolGenerators: Record<GeneratedToolName, ToolGenerator> = {
       const models = configuredClientModels(config);
       const modelLine = models[0] ? `model = ${tomlString(models[0])}\n` : "";
       const providerBlock = models.length > 0
-        ? `${modelLine}model_provider = "aimux"\n\n[model_providers.aimux]\nname = "AIMux"\nbase_url = ${tomlString(llmBaseUrl(port))}\nenv_key = "AIMUX_API_KEY"\n`
+        ? `${modelLine}model_provider = "aimux"\n\n[model_providers.aimux]\nname = "aimux"\nbase_url = ${tomlString(llmBaseUrl(port))}\nenv_key = "AIMUX_API_KEY"\n`
         : "";
 
       await writeManagedToml(

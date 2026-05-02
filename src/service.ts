@@ -79,7 +79,7 @@ const servicePlatform = (): ServicePlatform => {
     return process.platform;
   }
 
-  throw new Error("AIMux service management is only supported on macOS and Linux");
+  throw new Error("aimux service management is only supported on macOS and Linux");
 };
 
 const shellEscape = (value: string): string =>
@@ -141,7 +141,7 @@ const linuxServiceUnit = (
   const execStart = [command, ...args, "serve", "--port", String(defaultServicePort)].map(shellEscape).join(" ");
 
   return `[Unit]
-Description=AIMux local LLM and MCP gateway
+Description=aimux local LLM and MCP gateway
 After=network-online.target
 
 [Service]
@@ -236,7 +236,7 @@ const processOutput = (result: { stdout: string; stderr: string }): string =>
 
 const assertUserServiceScope = (): void => {
   if (process.getuid?.() === 0) {
-    throw new Error("AIMux services are installed as user-level services. Run this command without sudo.");
+    throw new Error("aimux services are installed as user-level services. Run this command without sudo.");
   }
 };
 
@@ -290,8 +290,8 @@ export const runServiceAction = async (action: string, context: ServiceContext, 
     const targetPath = await loadServiceConfig(path, context);
     await installServiceDefinition(definition);
     await restartService(definition);
-    context.stdout(`Loaded AIMux service config: ${targetPath}`);
-    context.stdout(`AIMux service restart complete`);
+    context.stdout(`Loaded aimux service config: ${targetPath}`);
+    context.stdout(`aimux service restart complete`);
     context.stdout(`Service file: ${definition.serviceFilePath}`);
     context.stdout(`Logs: ${definition.logPath}`);
     return;
@@ -301,7 +301,7 @@ export const runServiceAction = async (action: string, context: ServiceContext, 
     const file = Bun.file(definition.logPath);
 
     if (!(await file.exists())) {
-      context.stdout(`No AIMux service logs found at ${definition.logPath}`);
+      context.stdout(`No aimux service logs found at ${definition.logPath}`);
       return;
     }
 
@@ -317,7 +317,7 @@ export const runServiceAction = async (action: string, context: ServiceContext, 
   if (action === "restart") {
     await installServiceDefinition(definition);
     await restartService(definition);
-    context.stdout(`AIMux service restart complete`);
+    context.stdout(`aimux service restart complete`);
     context.stdout(`Service file: ${definition.serviceFilePath}`);
     context.stdout(`Logs: ${definition.logPath}`);
     return;
@@ -325,7 +325,7 @@ export const runServiceAction = async (action: string, context: ServiceContext, 
 
   if (action === "uninstall") {
     const result = await uninstallService(definition);
-    context.stdout(result.wasInstalled ? `AIMux service uninstall complete` : `AIMux service was not installed`);
+    context.stdout(result.wasInstalled ? `aimux service uninstall complete` : `aimux service was not installed`);
     context.stdout(result.wasInstalled ? `Removed service file: ${definition.serviceFilePath}` : `No service file found at: ${definition.serviceFilePath}`);
     context.stdout(`Logs kept at: ${definition.logPath}`);
     context.stdout(`Config kept at: ${serviceConfigPath()}`);
@@ -362,7 +362,7 @@ export const runServiceAction = async (action: string, context: ServiceContext, 
     }
   }
 
-  context.stdout(`AIMux service ${action} complete`);
+  context.stdout(`aimux service ${action} complete`);
   context.stdout(`Service file: ${definition.serviceFilePath}`);
   context.stdout(`Logs: ${definition.logPath}`);
 };

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve AIMux.
+Thanks for helping improve aimux.
 
 ## Development
 

@@ -336,7 +336,7 @@ mcp:
       },
     });
     expect(zed.language_models.openai_compatible.Existing.api_url).toBe("http://localhost:1234/v1");
-    expect(zed.language_models.openai_compatible["AIMux"]).toBeUndefined();
+    expect(zed.language_models.openai_compatible["aimux"]).toBeUndefined();
     expect(zed.context_servers["aimux"].args).toEqual(["serve", "mcp"]);
     expect(claudeCode.mcpServers["aimux"]).toEqual({
       type: "http",
@@ -450,7 +450,7 @@ mcp:
 
     expect(merged).toContain("// Existing Zed JSONC settings");
     expect(parsed.language_models.openai_compatible.Existing.api_url).toBe("http://localhost:1234/v1");
-    expect(parsed.language_models.openai_compatible["AIMux"]).toBeUndefined();
+    expect(parsed.language_models.openai_compatible["aimux"]).toBeUndefined();
     expect(parsed.context_servers["aimux"].args).toEqual(["serve", "mcp"]);
   });
 
@@ -481,7 +481,7 @@ mcp:
           },
         ],
       },
-      "AIMux": {
+      "aimux": {
         "api_url": "http://localhost:8787/v1",
         "available_models": [
           {
@@ -506,18 +506,18 @@ mcp:
     expect(parsed.agent.favorite_models).toEqual([]);
     expect(parsed.agent.model_parameters).toEqual([]);
     expect(parsed.agent.default_model).toEqual({
-      provider: "AIMux",
+      provider: "aimux",
       model: "custom/prod",
       enable_thinking: false,
     });
     expect(parsed.agent.inline_assistant_model).toEqual({
-      provider: "AIMux",
+      provider: "aimux",
       model: "custom/prod",
       enable_thinking: false,
     });
     expect(parsed.language_models.openai_compatible.Fireworks.api_url).toBe("https://api.fireworks.ai/inference/v1");
-    expect(parsed.language_models.openai_compatible["AIMux"].api_url).toBe("http://localhost:9999/v1");
-    expect(parsed.language_models.openai_compatible["AIMux"].available_models.map((model: { name: string }) => model.name))
+    expect(parsed.language_models.openai_compatible["aimux"].api_url).toBe("http://localhost:9999/v1");
+    expect(parsed.language_models.openai_compatible["aimux"].available_models.map((model: { name: string }) => model.name))
       .toEqual(["custom/prod"]);
   });
 
@@ -552,7 +552,7 @@ mcp:
 
     expect(definition.serviceFilePath).toBe("/home/example/.config/systemd/user/aimux.service");
     expect(definition.logPath).toBe("/home/example/.local/state/aimux/aimux.log");
-    expect(definition.content).toContain("Description=AIMux local LLM and MCP gateway");
+    expect(definition.content).toContain("Description=aimux local LLM and MCP gateway");
     expect(definition.content).toContain("WorkingDirectory=/home/example");
     expect(definition.content).toContain("ExecStart='/home/example/project/aimux' 'serve' '--port' '8787'");
     expect(definition.content).toContain("StandardOutput=append:/home/example/.local/state/aimux/aimux.log");

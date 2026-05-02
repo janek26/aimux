@@ -26,7 +26,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: AIMux version or commit SHA.
+      description: aimux version or commit SHA.
   - type: input
     id: bun
     attributes:
