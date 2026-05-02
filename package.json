@@ -1,5 +1,5 @@
 {
-  "name": "aimux",
+  "name": "@janek26/aimux",
   "version": "0.1.0",
   "description": "One Bun CLI for muxing LLM providers and MCP servers behind local gateways.",
   "type": "module",
