@@ -1,5 +1,9 @@
 # AIMux
 
+[![npm version](https://img.shields.io/npm/v/@janek26/aimux.svg)](https://www.npmjs.com/package/@janek26/aimux)
+[![CI](https://github.com/janek26/aimux/actions/workflows/ci.yml/badge.svg)](https://github.com/janek26/aimux/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-black.svg)](LICENSE)
+
 > "With xAI, OpenAI, Anthropic's models updating regularly, do I have to keep changing the 'model'=>'gpt-4-1-fast-non-reasoning' name for example in my code on ALL my sites for the next 100 years?
 >
 > Or can I just say 'model'=> use best or something?
@@ -23,11 +27,16 @@ Use the same local AI stack across Cursor, Zed, Claude Code, Codex, Gemini CLI, 
 ## Quick Start
 
 ```sh
-bun install
-bun src/cli.ts init
-bun src/cli.ts llm add fallback --name openai --preset openai --token "$OPENAI_API_KEY"
-bun src/cli.ts serve --port 8787
+bunx @janek26/aimux@latest help
+
+bun install -g @janek26/aimux
+
+aimux init
+aimux llm add fallback --name openai --preset openai --token "$OPENAI_API_KEY"
+aimux serve --port 8787
 ```
+
+After installing globally, use `aimux` directly. `bunx aimux help` also works once the global binary is on your `PATH`.
 
 Then use AIMux like an OpenAI-compatible API:
 
@@ -44,13 +53,13 @@ curl http://localhost:8787/v1/chat/completions \
 ## MCP
 
 ```sh
-bun src/cli.ts mcp add github \
+aimux mcp add github \
   --transport stdio \
   --command npx \
   --args "-y,@modelcontextprotocol/server-github" \
   --env "GITHUB_PERSONAL_ACCESS_TOKEN=$GITHUB_PERSONAL_ACCESS_TOKEN"
 
-bun src/cli.ts serve mcp
+aimux serve mcp
 ```
 
 Remote MCP servers can use OAuth, bearer tokens, custom headers, method filters, and method renames.
@@ -58,7 +67,7 @@ Remote MCP servers can use OAuth, bearer tokens, custom headers, method filters,
 ## Client Config
 
 ```sh
-bun src/cli.ts generate all
+aimux generate all
 ```
 
 Targets: `opencode`, `cursor`, `zed`, `claude-code`, `codex`, and `gemini-cli`.

@@ -1,7 +1,7 @@
 {
   "name": "@janek26/aimux",
   "version": "0.1.0",
-  "description": "One Bun CLI for muxing LLM providers and MCP servers behind local gateways.",
+  "description": "One local gateway for AI models and MCP servers across coding agents.",
   "type": "module",
   "license": "MIT",
   "packageManager": "bun@1.3.10",
@@ -31,8 +31,13 @@
     "llm",
     "mcp",
     "model-context-protocol",
+    "openai-compatible",
     "cli",
     "gateway",
+    "agent",
+    "cursor",
+    "zed",
+    "claude-code",
     "bun",
     "typescript"
   ],
