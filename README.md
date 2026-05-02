@@ -116,6 +116,8 @@ bun run check
 bun run build
 ```
 
+Releases are published exclusively by GitHub Actions through semantic-release. Add `NPM_TOKEN` to the repository secrets before pushing a conventional commit to `main`.
+
 See `docs/PROJECT.md` for architecture notes.
 
 ## License
