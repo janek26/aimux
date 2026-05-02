@@ -13,6 +13,6 @@ If this project is hosted on GitHub, report vulnerabilities through GitHub's pri
 
 ## Secrets and Local Config
 
-AI Federation config can contain LLM provider tokens, MCP authorization headers, OAuth access tokens, and refresh tokens. Real `.mcp-federation.yml` files must stay local and are ignored by git.
+AIMux config can contain LLM provider tokens, MCP authorization headers, OAuth access tokens, and refresh tokens. Real `.aimux.yml` files must stay local and are ignored by git.
 
-Use `.mcp-federation.example.yml` for examples and documentation. If a real token is accidentally exposed, revoke or rotate it immediately.
+Use `.aimux.example.yml` for examples and documentation. If a real token is accidentally exposed, revoke or rotate it immediately.

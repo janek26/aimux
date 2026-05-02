@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ai-fed.dev/schemas/config.schema.json",
-  "title": "AI federation config",
+  "$id": "https://aimux.dev/schemas/config.schema.json",
+  "title": "AI mux config",
   "type": "object",
   "$defs": {
     "stringList": {

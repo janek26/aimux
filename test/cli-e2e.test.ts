@@ -28,7 +28,7 @@ const testEnv = (home: string): Record<string, string> =>
   );
 
 const createTempDir = async (): Promise<string> => {
-  const dir = await mkdtemp(join(tmpdir(), "ai-fed-e2e-"));
+  const dir = await mkdtemp(join(tmpdir(), "aimux-e2e-"));
   tempDirs.push(dir);
   return dir;
 };
@@ -168,7 +168,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "dangerous",
-      description: "Should be hidden by ai-fed",
+      description: "Should be hidden by aimux",
       inputSchema: { type: "object" },
     },
   ],
@@ -404,7 +404,7 @@ describe("CLI e2e", () => {
     }
   }, 15_000);
 
-  test("serves a federated MCP stdio server through the CLI", async () => {
+  test("serves a muxed MCP stdio server through the CLI", async () => {
     const cwd = await createTempDir();
     const fakeMcpPath = await writeFakeMcpServer(cwd);
 

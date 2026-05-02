@@ -1,4 +1,4 @@
-import type { FederationConfig, LlmConfig, LlmFallbackRoute, LlmProvider, LlmRoute, McpServerConfig } from "../config/types.js";
+import type { AimuxConfig, LlmConfig, LlmFallbackRoute, LlmProvider, LlmRoute, McpServerConfig } from "../config/types.js";
 
 export type LlmListItem = {
   target: string;
@@ -27,9 +27,9 @@ type LlmRouteOptions = {
 
 const isFallbackTarget = (target: string): boolean => target === "fallback";
 
-export const createDefaultConfig = (): FederationConfig => ({});
+export const createDefaultConfig = (): AimuxConfig => ({});
 
-const getProvider = (config: FederationConfig, providerName: string): LlmProvider | undefined =>
+const getProvider = (config: AimuxConfig, providerName: string): LlmProvider | undefined =>
   config.providers?.[providerName];
 
 const withFallbackLast = (
@@ -41,7 +41,7 @@ const withFallbackLast = (
     ...(fallback && fallback.length > 0 ? { fallback } : {}),
   }) as LlmConfig;
 
-export const listLlmProviders = (config: FederationConfig): LlmListItem[] => {
+export const listLlmProviders = (config: AimuxConfig): LlmListItem[] => {
   const llm = config.llm ?? {};
   const mapped = Object.entries(llm)
     .filter(([target]) => !isFallbackTarget(target))
@@ -82,7 +82,7 @@ export const listLlmProviders = (config: FederationConfig): LlmListItem[] => {
   return [...mapped, ...fallback];
 };
 
-export const listLlmRoutes = (config: FederationConfig): LlmRouteListItem[] => {
+export const listLlmRoutes = (config: AimuxConfig): LlmRouteListItem[] => {
   const llm = config.llm ?? {};
   return Object.entries(llm)
     .filter(([target]) => !isFallbackTarget(target))
@@ -93,11 +93,11 @@ export const listLlmRoutes = (config: FederationConfig): LlmRouteListItem[] => {
     );
 };
 
-export const listMcpServers = (config: FederationConfig): McpListItem[] =>
+export const listMcpServers = (config: AimuxConfig): McpListItem[] =>
   Object.entries(config.mcp ?? {}).map(([name, server]) => ({ name, server }));
 
 export const assertUniqueProviderName = (
-  config: FederationConfig,
+  config: AimuxConfig,
   providerName: string,
   replacingName?: string,
 ): void => {
@@ -109,12 +109,12 @@ export const assertUniqueProviderName = (
 };
 
 export const addLlmProvider = (
-  config: FederationConfig,
+  config: AimuxConfig,
   target: string,
   providerName: string,
   provider: LlmProvider | undefined,
   routeOptions: LlmRouteOptions = {},
-): FederationConfig => {
+): AimuxConfig => {
   if (!isFallbackTarget(target) && !routeOptions.model) {
     throw new Error("Custom LLM targets require an upstream model");
   }
@@ -189,9 +189,9 @@ export const addLlmProvider = (
 };
 
 export const removeLlmProvider = (
-  config: FederationConfig,
+  config: AimuxConfig,
   providerName: string,
-): { config: FederationConfig; removed: boolean } => {
+): { config: AimuxConfig; removed: boolean } => {
   const llm = config.llm;
   const { [providerName]: removedProvider, ...remainingProviders } = config.providers ?? {};
 
@@ -232,10 +232,10 @@ export const removeLlmProvider = (
 };
 
 export const addMcpServer = (
-  config: FederationConfig,
+  config: AimuxConfig,
   name: string,
   server: McpServerConfig,
-): FederationConfig => {
+): AimuxConfig => {
   if (config.mcp?.[name]) {
     throw new Error(`MCP server already exists: ${name}`);
   }
@@ -250,9 +250,9 @@ export const addMcpServer = (
 };
 
 export const removeMcpServer = (
-  config: FederationConfig,
+  config: AimuxConfig,
   name: string,
-): { config: FederationConfig; removed: boolean } => {
+): { config: AimuxConfig; removed: boolean } => {
   const { [name]: removed, ...remaining } = config.mcp ?? {};
 
   if (!removed) {

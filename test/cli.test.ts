@@ -1,15 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { parse as parseJsonc } from "jsonc-parser";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseArgs, runCli } from "../src/cli.js";
+import { mergeJsoncObjectContent, mergeZedGlobalSettingsContent, parseArgs, runCli } from "../src/cli.js";
 import { YamlConfigRepository } from "../src/config/repository.js";
 
 const projectRoot = new URL("..", import.meta.url).pathname;
 const tempDirs: string[] = [];
 
 const createTempDir = async (): Promise<string> => {
-  const dir = await mkdtemp(join(tmpdir(), "ai-fed-"));
+  const dir = await mkdtemp(join(tmpdir(), "aimux-"));
   tempDirs.push(dir);
   return dir;
 };
@@ -111,7 +112,7 @@ describe("CLI", () => {
     }
 
     const repository = new YamlConfigRepository(undefined, cwd);
-    const config = await repository.read(join(cwd, ".mcp-federation.yml"));
+    const config = await repository.read(join(cwd, ".aimux.yml"));
 
     expect(errors).toEqual([]);
     expect(Object.keys(config?.config.providers ?? {})).toEqual(["prod"]);
@@ -174,7 +175,7 @@ describe("CLI", () => {
     }
 
     const repository = new YamlConfigRepository(undefined, cwd);
-    const config = await repository.read(join(cwd, ".mcp-federation.yml"));
+    const config = await repository.read(join(cwd, ".aimux.yml"));
 
     expect(errors.at(-1)).toContain("does not expose model: missing-model");
     expect(config?.config).toEqual({});
@@ -211,7 +212,7 @@ describe("CLI", () => {
     ).toBe(1);
 
     const repository = new YamlConfigRepository(undefined, cwd);
-    const config = await repository.read(join(cwd, ".mcp-federation.yml"));
+    const config = await repository.read(join(cwd, ".aimux.yml"));
 
     expect(errors.at(-1)).toContain("does not expose method(s): missing");
     expect(config?.config).toEqual({});
@@ -233,7 +234,7 @@ describe("CLI", () => {
 
     try {
       await Bun.write(
-        join(cwd, ".mcp-federation.yml"),
+        join(cwd, ".aimux.yml"),
         `providers:
   prod:
     schema: openai
@@ -268,7 +269,7 @@ mcp:
     };
 
     await Bun.write(
-      join(cwd, ".mcp-federation.yml"),
+      join(cwd, ".aimux.yml"),
       `providers:
   prod:
     schema: openai
@@ -290,43 +291,56 @@ mcp:
       join(cwd, "opencode.json"),
       JSON.stringify({ provider: { existing: { name: "Existing" } } }),
     );
+    await Bun.write(
+      join(cwd, ".zed/settings.json"),
+      `// Existing Zed JSONC settings
+{
+  "language_models": {
+    "openai_compatible": {
+      "Existing": {
+        "api_url": "http://localhost:1234/v1",
+      },
+    },
+  },
+}
+`,
+    );
 
     expect(await runCli(["generate", "all", "--port", "9999"], context)).toBe(0);
 
     const opencode = await Bun.file(join(cwd, "opencode.json")).json();
     const cursor = await Bun.file(join(cwd, ".cursor/mcp.json")).json();
-    const zed = await Bun.file(join(cwd, ".zed/settings.json")).json();
+    const zed = parseJsonc(await Bun.file(join(cwd, ".zed/settings.json")).text());
     const claudeCode = await Bun.file(join(cwd, ".mcp.json")).json();
     const codex = await Bun.file(join(cwd, ".codex/config.toml")).text();
     const gemini = await Bun.file(join(cwd, ".gemini/settings.json")).json();
 
     expect(opencode.provider.existing.name).toBe("Existing");
-    expect(opencode.model).toBe("ai-fed/custom/prod");
-    expect(opencode.provider["ai-fed"].options.baseURL).toBe("http://localhost:9999/v1");
-    expect(Object.keys(opencode.provider["ai-fed"].models)).toEqual(["custom/prod", "fallback-model"]);
-    expect(opencode.mcp["ai-fed"].url).toBe("http://localhost:9999/mcp");
+    expect(opencode.model).toBe("aimux/custom/prod");
+    expect(opencode.provider["aimux"].options.baseURL).toBe("http://localhost:9999/v1");
+    expect(Object.keys(opencode.provider["aimux"].models)).toEqual(["custom/prod", "fallback-model"]);
+    expect(opencode.mcp["aimux"].url).toBe("http://localhost:9999/mcp");
     expect(cursor).toEqual({
       mcpServers: {
-        "ai-fed": {
+        "aimux": {
           url: "http://localhost:9999/mcp",
         },
       },
     });
-    expect(zed.language_models.openai_compatible["AI Federation"].api_url).toBe("http://localhost:9999/v1");
-    expect(zed.language_models.openai_compatible["AI Federation"].available_models.map((model: { name: string }) => model.name))
-      .toEqual(["custom/prod", "fallback-model"]);
-    expect(zed.context_servers["ai-fed"].args).toEqual(["serve", "mcp"]);
-    expect(claudeCode.mcpServers["ai-fed"]).toEqual({
+    expect(zed.language_models.openai_compatible.Existing.api_url).toBe("http://localhost:1234/v1");
+    expect(zed.language_models.openai_compatible["AIMux"]).toBeUndefined();
+    expect(zed.context_servers["aimux"].args).toEqual(["serve", "mcp"]);
+    expect(claudeCode.mcpServers["aimux"]).toEqual({
       type: "http",
       url: "http://localhost:9999/mcp",
     });
-    expect(codex).toContain("# <ai-fed-generated>");
+    expect(codex).toContain("# <aimux-generated>");
     expect(codex).toContain('model = "custom/prod"');
-    expect(codex).toContain('[model_providers.ai-fed]');
+    expect(codex).toContain('[model_providers.aimux]');
     expect(codex).toContain('base_url = "http://localhost:9999/v1"');
-    expect(codex).toContain('[mcp_servers.ai-fed]');
+    expect(codex).toContain('[mcp_servers.aimux]');
     expect(codex).toContain('url = "http://localhost:9999/mcp"');
-    expect(gemini.mcpServers["ai-fed"]).toEqual({
+    expect(gemini.mcpServers["aimux"]).toEqual({
       httpUrl: "http://localhost:9999/mcp",
       timeout: 300000,
       trust: true,
@@ -340,6 +354,9 @@ mcp:
     expect(errors).toContain("cursor: LLM endpoint config is not supported by project-local generation; wrote MCP config only.");
     expect(errors).toContain("claude-code: LLM endpoint config is not supported by project-local generation; wrote MCP config only.");
     expect(errors).toContain("gemini-cli: LLM endpoint config is not supported by project-local generation; wrote MCP config only.");
+    expect(errors).toContain(
+      "zed: language_models is only supported in global Zed settings; wrote local MCP config only. Run interactively to approve updating global Zed settings.",
+    );
   });
 
   test("rejects unsupported generate targets", async () => {
@@ -351,7 +368,7 @@ mcp:
       stderr: (message: string) => errors.push(message),
     };
 
-    await Bun.write(join(cwd, ".mcp-federation.yml"), "");
+    await Bun.write(join(cwd, ".aimux.yml"), "");
 
     expect(await runCli(["generate", "unknown"], context)).toBe(1);
     expect(errors.at(-1)).toContain("Unsupported generate target(s): unknown");
@@ -366,7 +383,7 @@ mcp:
       stderr: (message: string) => errors.push(message),
     };
 
-    await Bun.write(join(cwd, ".mcp-federation.yml"), "");
+    await Bun.write(join(cwd, ".aimux.yml"), "");
 
     expect(await runCli(["generate"], context)).toBe(1);
     expect(errors.at(-1)).toContain("Missing tool name");
@@ -383,7 +400,7 @@ mcp:
     };
 
     await Bun.write(
-      join(cwd, ".mcp-federation.yml"),
+      join(cwd, ".aimux.yml"),
       `mcp:
   fake:
     transport: http
@@ -395,8 +412,104 @@ mcp:
 
     const opencode = await Bun.file(join(cwd, "opencode.json")).json();
     expect(opencode.provider).toEqual({});
-    expect(opencode.mcp["ai-fed"].url).toBe("http://localhost:8787/mcp");
+    expect(opencode.mcp["aimux"].url).toBe("http://localhost:8787/mcp");
     expect(outputs).toContain(`Generated ${join(cwd, "opencode.json")}`);
     expect(errors).toContain("opencode: no concrete LLM models found in config; wrote MCP config and skipped LLM model entries.");
+  });
+
+  test("merges local Zed JSONC without touching language model settings", () => {
+    const content = `// Existing Zed JSONC settings
+{
+  "language_models": {
+    "openai_compatible": {
+      "Existing": {
+        "api_url": "http://localhost:1234/v1",
+      },
+    },
+  },
+}
+`;
+
+    const merged = mergeJsoncObjectContent(".zed/settings.json", content, {
+      context_servers: {
+        "aimux": {
+          command: "aimux",
+          args: ["serve", "mcp"],
+        },
+      },
+    });
+    const parsed = parseJsonc(merged);
+
+    expect(merged).toContain("// Existing Zed JSONC settings");
+    expect(parsed.language_models.openai_compatible.Existing.api_url).toBe("http://localhost:1234/v1");
+    expect(parsed.language_models.openai_compatible["AIMux"]).toBeUndefined();
+    expect(parsed.context_servers["aimux"].args).toEqual(["serve", "mcp"]);
+  });
+
+  test("merges global Zed language models and agent defaults without replacing other settings", () => {
+    const content = `// Zed settings
+{
+  "agent": {
+    "inline_assistant_model": {
+      "provider": "Fireworks",
+      "model": "accounts/fireworks/models/kimi",
+      "enable_thinking": false,
+    },
+    "default_model": {
+      "provider": "Fireworks",
+      "model": "accounts/fireworks/models/kimi",
+      "enable_thinking": false,
+    },
+    "favorite_models": [],
+    "model_parameters": [],
+  },
+  "language_models": {
+    "openai_compatible": {
+      "Fireworks": {
+        "api_url": "https://api.fireworks.ai/inference/v1",
+        "available_models": [
+          {
+            "name": "accounts/fireworks/models/kimi",
+          },
+        ],
+      },
+      "AIMux": {
+        "api_url": "http://localhost:8787/v1",
+        "available_models": [
+          {
+            "name": "old-model",
+          },
+        ],
+      },
+    },
+  },
+}
+`;
+
+    const merged = mergeZedGlobalSettingsContent(
+      "/Users/example/.config/zed/settings.json",
+      content,
+      ["custom/prod"],
+      9999,
+    );
+    const parsed = parseJsonc(merged);
+
+    expect(merged).toContain("// Zed settings");
+    expect(parsed.agent.favorite_models).toEqual([]);
+    expect(parsed.agent.model_parameters).toEqual([]);
+    expect(parsed.agent.default_model).toEqual({
+      provider: "AIMux",
+      model: "custom/prod",
+      enable_thinking: false,
+    });
+    expect(parsed.agent.inline_assistant_model).toEqual({
+      provider: "AIMux",
+      model: "custom/prod",
+      enable_thinking: false,
+    });
+    expect(parsed.language_models.openai_compatible.Fireworks.api_url).toBe("https://api.fireworks.ai/inference/v1");
+    expect(parsed.language_models.openai_compatible["AIMux"].api_url).toBe("http://localhost:9999/v1");
+    expect(parsed.language_models.openai_compatible["AIMux"].available_models.map((model: { name: string }) => model.name))
+      .toEqual(["custom/prod"]);
   });
 });

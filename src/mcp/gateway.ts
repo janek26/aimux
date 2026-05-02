@@ -20,7 +20,7 @@ import {
   type ListToolsResult,
   type ReadResourceResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { FederationConfig, McpServerConfig, MethodControls } from "../config/types.js";
+import type { AimuxConfig, McpServerConfig, MethodControls } from "../config/types.js";
 import { ConfigOAuthClientProvider, createOAuthMetadata } from "./oauth.js";
 
 type McpTool = ListToolsResult["tools"][number];
@@ -63,7 +63,7 @@ export type McpClientPort = {
 
 export class McpAuthError extends Error {
   constructor(serverName: string) {
-    super(`MCP server ${serverName} requires valid authentication. Run ai-fed setup or ai-fed config validate to refresh it.`);
+    super(`MCP server ${serverName} requires valid authentication. Run aimux setup or aimux config validate to refresh it.`);
     this.name = "McpAuthError";
   }
 }
@@ -93,7 +93,7 @@ export const createSdkClient = async (
   config: McpServerConfig,
   options: McpRuntimeOptions = {},
 ): Promise<McpClientPort> => {
-  const client = new Client({ name: `ai-fed-${serverName}`, version: "0.1.0" });
+  const client = new Client({ name: `aimux-${serverName}`, version: "0.1.0" });
   const transport =
     config.transport === "stdio"
       ? new StdioClientTransport({
@@ -281,14 +281,14 @@ export const applyMethodControls = <T extends { name: string }>(
   });
 };
 
-export class McpFederation {
+export class McpMux {
   constructor(private readonly clients: Record<string, { config: McpServerConfig; client: McpClientPort }>) {}
 
   static async fromConfig(
-    config: FederationConfig,
+    config: AimuxConfig,
     createClient: McpClientFactory = createSdkClient,
     options: McpRuntimeOptions = {},
-  ): Promise<McpFederation> {
+  ): Promise<McpMux> {
     const entries = await Promise.all(
       Object.entries(config.mcp ?? {}).map(async ([serverName, serverConfig]) => [
         serverName,
@@ -299,7 +299,7 @@ export class McpFederation {
       ] as const),
     );
 
-    return new McpFederation(Object.fromEntries(entries));
+    return new McpMux(Object.fromEntries(entries));
   }
 
   async listTools(): Promise<ListToolsResult> {
@@ -318,7 +318,7 @@ export class McpFederation {
     const tool = (await this.ownedTools()).find((item) => item.exposedName === name);
 
     if (!tool) {
-      throw new Error(`Unknown federated MCP tool: ${name}`);
+      throw new Error(`Unknown muxed MCP tool: ${name}`);
     }
 
     const client = this.clients[tool.serverName]?.client;
@@ -348,7 +348,7 @@ export class McpFederation {
     const prompt = (await this.ownedPrompts()).find((item) => item.exposedName === name);
 
     if (!prompt) {
-      throw new Error(`Unknown federated MCP prompt: ${name}`);
+      throw new Error(`Unknown muxed MCP prompt: ${name}`);
     }
 
     const client = this.clients[prompt.serverName]?.client;
@@ -394,7 +394,7 @@ export class McpFederation {
       }
     }
 
-    throw new Error(`Unknown federated MCP resource: ${uri}`);
+    throw new Error(`Unknown muxed MCP resource: ${uri}`);
   }
 
   async close(): Promise<void> {
@@ -430,9 +430,9 @@ export class McpFederation {
   }
 }
 
-export const createMcpServer = (federation: McpFederation): Server => {
+export const createMcpServer = (mux: McpMux): Server => {
   const server = new Server(
-    { name: "ai-fed", version: "0.1.0" },
+    { name: "aimux", version: "0.1.0" },
     {
       capabilities: {
         tools: {},
@@ -442,35 +442,35 @@ export const createMcpServer = (federation: McpFederation): Server => {
     },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => federation.listTools());
+  server.setRequestHandler(ListToolsRequestSchema, async () => mux.listTools());
   server.setRequestHandler(CallToolRequestSchema, async (request) =>
-    federation.callTool(request.params.name, request.params.arguments as Record<string, unknown> | undefined),
+    mux.callTool(request.params.name, request.params.arguments as Record<string, unknown> | undefined),
   );
-  server.setRequestHandler(ListPromptsRequestSchema, async () => federation.listPrompts());
+  server.setRequestHandler(ListPromptsRequestSchema, async () => mux.listPrompts());
   server.setRequestHandler(GetPromptRequestSchema, async (request) =>
-    federation.getPrompt(request.params.name, request.params.arguments),
+    mux.getPrompt(request.params.name, request.params.arguments),
   );
-  server.setRequestHandler(ListResourcesRequestSchema, async () => federation.listResources());
+  server.setRequestHandler(ListResourcesRequestSchema, async () => mux.listResources());
   server.setRequestHandler(ReadResourceRequestSchema, async (request) =>
-    federation.readResource(request.params.uri),
+    mux.readResource(request.params.uri),
   );
 
   return server;
 };
 
 export const serveMcpStdio = async (
-  config: FederationConfig,
+  config: AimuxConfig,
   options: McpRuntimeOptions = {},
 ): Promise<McpStdioSession> => {
-  const federation = await McpFederation.fromConfig(config, createSdkClient, options);
-  const server = createMcpServer(federation);
+  const mux = await McpMux.fromConfig(config, createSdkClient, options);
+  const server = createMcpServer(mux);
   await server.connect(new StdioServerTransport());
 
   return {
     close: async () => {
       await Promise.allSettled([
         server.close(),
-        federation.close(),
+        mux.close(),
       ]);
     },
   };
@@ -530,26 +530,26 @@ const responseWithCleanup = (
 };
 
 export const createMcpHttpHandler = (
-  config: FederationConfig,
+  config: AimuxConfig,
   options: McpRuntimeOptions = {},
   createClient: McpClientFactory = createSdkClient,
 ): McpHttpHandler => {
-  let federationPromise: Promise<McpFederation> | undefined;
+  let muxPromise: Promise<McpMux> | undefined;
 
-  const getFederation = async (): Promise<McpFederation> => {
-    if (!federationPromise) {
-      federationPromise = McpFederation.fromConfig(config, createClient, options).catch((error) => {
-        federationPromise = undefined;
+  const getMux = async (): Promise<McpMux> => {
+    if (!muxPromise) {
+      muxPromise = McpMux.fromConfig(config, createClient, options).catch((error) => {
+        muxPromise = undefined;
         throw error;
       });
     }
 
-    return federationPromise;
+    return muxPromise;
   };
 
   const handler = async (request: Request): Promise<Response> => {
-    const federation = await getFederation();
-    const server = createMcpServer(federation);
+    const mux = await getMux();
+    const server = createMcpServer(mux);
     const transport = new WebStandardStreamableHTTPServerTransport({
       enableJsonResponse: true,
     });
@@ -565,9 +565,9 @@ export const createMcpHttpHandler = (
   };
 
   handler.close = async (): Promise<void> => {
-    const federation = await federationPromise?.catch(() => undefined);
-    federationPromise = undefined;
-    await federation?.close();
+    const mux = await muxPromise?.catch(() => undefined);
+    muxPromise = undefined;
+    await mux?.close();
   };
 
   return handler;

@@ -1,5 +1,5 @@
-export const CONFIG_FILE_NAME = ".mcp-federation.yml";
-export const CONFIG_FILE_NAMES = [CONFIG_FILE_NAME, ".mcp-federation.yaml"] as const;
+export const CONFIG_FILE_NAME = ".aimux.yml";
+export const CONFIG_FILE_NAMES = [CONFIG_FILE_NAME, ".aimux.yaml"] as const;
 
 export const LLM_PRESETS = [
   "openai",
@@ -95,7 +95,7 @@ export type RemoteMcpServerConfig = MethodControls & {
 
 export type McpServerConfig = StdioMcpServerConfig | RemoteMcpServerConfig;
 
-export type FederationConfig = {
+export type AimuxConfig = {
   providers?: Record<string, LlmProvider>;
   llm?: LlmConfig;
   mcp?: Record<string, McpServerConfig>;
@@ -103,7 +103,7 @@ export type FederationConfig = {
 
 export type ConfigLocation = {
   path: string;
-  config: FederationConfig;
+  config: AimuxConfig;
 };
 
 export type ValidationResult = {
@@ -114,10 +114,10 @@ export type ValidationResult = {
 export type ConfigRepositoryPort = {
   findConfigPath(startDir?: string): Promise<string | undefined>;
   read(path?: string): Promise<ConfigLocation | undefined>;
-  write(path: string, config: FederationConfig): Promise<void>;
+  write(path: string, config: AimuxConfig): Promise<void>;
 };
 
 export type ConfigValidatorPort = {
-  validate(config: FederationConfig): Promise<ValidationResult>;
-  assertValid(config: FederationConfig): Promise<void>;
+  validate(config: AimuxConfig): Promise<ValidationResult>;
+  assertValid(config: AimuxConfig): Promise<void>;
 };

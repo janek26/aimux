@@ -1,18 +1,18 @@
 {
-  "name": "ai-federation",
+  "name": "aimux",
   "version": "0.1.0",
-  "description": "One Bun CLI for federating LLM providers and MCP servers behind local gateways.",
+  "description": "One Bun CLI for muxing LLM providers and MCP servers behind local gateways.",
   "type": "module",
   "license": "MIT",
   "packageManager": "bun@1.3.10",
   "bin": {
-    "ai-fed": "./src/cli.ts"
+    "aimux": "./src/cli.ts"
   },
   "files": [
     "src",
     "README.md",
     "LICENSE",
-    ".mcp-federation.example.yml"
+    ".aimux.example.yml"
   ],
   "keywords": [
     "ai",
@@ -25,7 +25,7 @@
     "typescript"
   ],
   "scripts": {
-    "build": "bun build ./src/cli.ts --compile --outfile ai-fed",
+    "build": "bun build ./src/cli.ts --compile --outfile aimux",
     "check": "bun run typecheck && bun test",
     "prepublishOnly": "bun run check && bun run build",
     "test": "bun test",
@@ -39,6 +39,7 @@
     "@hyperjump/json-schema": "^1.17.6",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cosmiconfig": "^9.0.1",
+    "jsonc-parser": "^3.3.1",
     "yaml": "^2.8.3"
   },
   "devDependencies": {

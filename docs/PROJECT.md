@@ -1,9 +1,9 @@
 # Project Architecture
 
-AI Federation is a local control plane for AI tooling. It keeps provider and MCP server configuration in one YAML file, validates it, and exposes two gateway surfaces:
+AIMux is a local control plane for AI tooling. It keeps provider and MCP server configuration in one YAML file, validates it, and exposes two gateway surfaces:
 
 - An OpenAI-compatible LLM gateway at `/v1/models` and `/v1/chat/completions`.
-- A federated MCP gateway over Streamable HTTP or stdio.
+- A muxed MCP gateway over Streamable HTTP or stdio.
 
 The project is intentionally a Bun-first TypeScript CLI. The code favors small modules with explicit data flow over framework abstractions.
 
@@ -18,7 +18,7 @@ The project is intentionally a Bun-first TypeScript CLI. The code favors small m
 
 ## Config Model
 
-The CLI reads `.mcp-federation.yml` or `.mcp-federation.yaml`. Lookup starts in the current directory, walks upward, and finally checks the user's home directory.
+The CLI reads `.aimux.yml` or `.aimux.yaml`. Lookup starts in the current directory, walks upward, and finally checks the user's home directory.
 
 The config has three top-level sections:
 
@@ -49,8 +49,8 @@ mcp:
 LLM providers can be configured from presets or explicit schemas:
 
 ```sh
-ai-fed llm add fallback --name openai --preset openai --token "$OPENAI_API_KEY"
-ai-fed llm add custom/prod --name openai --model gpt-4o
+aimux llm add fallback --name openai --preset openai --token "$OPENAI_API_KEY"
+aimux llm add custom/prod --name openai --model gpt-4o
 ```
 
 Preset providers resolve to a schema and base URL in `src/llm/providers.ts`. Custom providers must specify a schema and URL.
@@ -71,7 +71,7 @@ Routing behavior:
 MCP servers can use `stdio`, `http`, or `sse` transports:
 
 ```sh
-ai-fed mcp add github \
+aimux mcp add github \
   --transport stdio \
   --command npx \
   --args "-y,@modelcontextprotocol/server-github"
@@ -104,7 +104,7 @@ Method controls are applied per upstream server:
 - `src/config/validation.ts` combines JSON Schema validation with cross-reference checks.
 - `src/core/config.ts` contains pure config transforms.
 - `src/llm` contains provider resolution, preflight checks, and HTTP proxy behavior.
-- `src/mcp` contains MCP client creation, OAuth persistence, method federation, and server adapters.
+- `src/mcp` contains MCP client creation, OAuth persistence, method mux, and server adapters.
 - `test` covers schema rules, pure transforms, CLI flows, LLM behavior, MCP behavior, OAuth, and end-to-end CLI execution.
 
 ## Release Checklist
@@ -123,4 +123,8 @@ Also verify that no local config or generated client config is staged:
 git status --short
 ```
 
-The files `.mcp-federation.yml`, `opencode.json`, `.cursor/mcp.json`, `.zed/settings.json`, `.mcp.json`, `.codex/config.toml`, `.gemini/settings.json`, and `ai-fed` are ignored because they are local state or build output.
+The files `.aimux.yml`, `opencode.json`, `.cursor/mcp.json`, `.zed/settings.json`, `.mcp.json`, `.codex/config.toml`, `.gemini/settings.json`, and `aimux` are ignored because they are local state or build output.
+
+## Client Config Notes
+
+Zed only supports `language_models` in the global user settings file for now. The generator writes project-local `.zed/settings.json` for MCP `context_servers`, and in interactive sessions asks before writing `language_models.openai_compatible["AIMux"]` plus `agent.default_model`/`agent.inline_assistant_model` to `~/.config/zed/settings.json`.

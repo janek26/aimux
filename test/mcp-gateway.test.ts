@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { applyMethodControls, createMcpHttpHandler, listMcpMethodNames, McpAuthError, McpFederation, validateMcpServerConfig, type McpClientPort } from "../src/mcp/gateway.js";
+import { applyMethodControls, createMcpHttpHandler, listMcpMethodNames, McpAuthError, McpMux, validateMcpServerConfig, type McpClientPort } from "../src/mcp/gateway.js";
 import type { McpServerConfig } from "../src/config/types.js";
 
 const fakeClient = (toolNames: string[]): McpClientPort => ({
@@ -39,8 +39,8 @@ describe("MCP gateway", () => {
     ).toEqual([["search", "hf_search"]]);
   });
 
-  test("forwards federated tool calls back to the owning server", async () => {
-    const federation = new McpFederation({
+  test("forwards muxed tool calls back to the owning server", async () => {
+    const mux = new McpMux({
       a: {
         config: {
           transport: "http",
@@ -58,10 +58,10 @@ describe("MCP gateway", () => {
       },
     });
 
-    await expect(federation.listTools()).resolves.toMatchObject({
+    await expect(mux.listTools()).resolves.toMatchObject({
       tools: [{ name: "a_search" }, { name: "search" }],
     });
-    await expect(federation.callTool("a_search")).resolves.toMatchObject({
+    await expect(mux.callTool("a_search")).resolves.toMatchObject({
       content: [{ text: "called:search" }],
     });
   });
@@ -112,7 +112,7 @@ describe("MCP gateway", () => {
     ).resolves.toEqual(["echo", "search", "summarize"]);
   });
 
-  test("retries MCP HTTP federation creation after an initialization failure", async () => {
+  test("retries MCP HTTP mux creation after an initialization failure", async () => {
     let attempts = 0;
     const handler = createMcpHttpHandler(
       {

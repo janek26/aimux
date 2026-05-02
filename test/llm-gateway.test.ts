@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { createLlmHttpHandler, selectLlmRoute } from "../src/llm/gateway.js";
-import type { FederationConfig } from "../src/config/types.js";
+import type { AimuxConfig } from "../src/config/types.js";
 
 const jsonResponse = (body: unknown, init?: ResponseInit): Response =>
   Response.json(body, init);
 
 describe("LLM gateway", () => {
   test("routes explicit model remaps to their configured provider model", async () => {
-    const config: FederationConfig = {
+    const config: AimuxConfig = {
       providers: {
         prod: {
           preset: "ollama",
@@ -39,7 +39,7 @@ describe("LLM gateway", () => {
 
       return jsonResponse({ data: [{ id: "target-model" }] });
     };
-    const config: FederationConfig = {
+    const config: AimuxConfig = {
       providers: {
         one: { schema: "openai", url: "https://one.example/v1" },
         two: { schema: "openai", url: "https://two.example/v1" },

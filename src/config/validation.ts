@@ -2,7 +2,7 @@ import { registerSchema, validate } from "@hyperjump/json-schema/draft-2020-12";
 import type { SchemaObject } from "@hyperjump/json-schema/draft-2020-12";
 import type { Json } from "@hyperjump/json-pointer";
 import configSchemaJson from "./config.schema.json";
-import type { ConfigValidatorPort, FederationConfig, ValidationResult } from "./types.js";
+import type { ConfigValidatorPort, AimuxConfig, ValidationResult } from "./types.js";
 
 type ConfigSchema = SchemaObject & { $id: string };
 type ValidateConfig = Awaited<ReturnType<typeof validate>>;
@@ -35,9 +35,9 @@ const formatErrors = (errors: unknown): string[] => {
   });
 };
 
-const configAsJson = (config: FederationConfig): Json => config as Json;
+const configAsJson = (config: AimuxConfig): Json => config as Json;
 
-const collectUnknownProviderReferences = (config: FederationConfig): string[] => {
+const collectUnknownProviderReferences = (config: AimuxConfig): string[] => {
   const llm = config.llm ?? {};
   const providerNames = new Set(Object.keys(config.providers ?? {}));
   const routeProviders = Object.entries(llm)
@@ -62,7 +62,7 @@ const duplicateValues = (values: string[]): string[] => {
 export class HyperjumpConfigValidator implements ConfigValidatorPort {
   private compiled?: ValidateConfig;
 
-  async validate(config: FederationConfig): Promise<ValidationResult> {
+  async validate(config: AimuxConfig): Promise<ValidationResult> {
     const validateConfig = await this.getValidator();
     const schemaResult = validateConfig(configAsJson(config), "DETAILED");
     const unknownProviderReferences = [...new Set(collectUnknownProviderReferences(config))];
@@ -80,7 +80,7 @@ export class HyperjumpConfigValidator implements ConfigValidatorPort {
     };
   }
 
-  async assertValid(config: FederationConfig): Promise<void> {
+  async assertValid(config: AimuxConfig): Promise<void> {
     const result = await this.validate(config);
 
     if (!result.valid) {

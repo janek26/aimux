@@ -1,5 +1,5 @@
-# Copy this file to .mcp-federation.yml and replace placeholders with local values.
-# Do not commit real .mcp-federation.yml files; they can contain API keys and OAuth tokens.
+# Copy this file to .aimux.yml and replace placeholders with local values.
+# Do not commit real .aimux.yml files; they can contain API keys and OAuth tokens.
 
 providers:
   openai:

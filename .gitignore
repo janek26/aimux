@@ -2,14 +2,14 @@
 node_modules/
 
 # Build outputs
-ai-fed
+aimux
 dist/
 build/
 coverage/
 
 # Local configuration and secrets
-.mcp-federation.yml
-.mcp-federation.yaml
+.aimux.yml
+.aimux.yaml
 .env
 .env.*
 !.env.example

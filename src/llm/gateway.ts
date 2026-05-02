@@ -1,4 +1,4 @@
-import type { FederationConfig, LlmFallbackRoute, LlmProvider } from "../config/types.js";
+import type { AimuxConfig, LlmFallbackRoute, LlmProvider } from "../config/types.js";
 import { listLlmProviders, listLlmRoutes } from "../core/config.js";
 import { assertProviderToken, resolveProvider, type ResolvedLlmProvider } from "./providers.js";
 
@@ -100,7 +100,7 @@ const canServeModel = async (
 };
 
 export const selectLlmRoute = async (
-  config: FederationConfig,
+  config: AimuxConfig,
   requestedModel: string,
   fetcher: FetchLike = fetch,
 ): Promise<LlmRoute> => {
@@ -180,7 +180,7 @@ const toAnthropicRequest = (request: ChatRequest, model: string): Record<string,
 });
 
 export const proxyChatCompletion = async (
-  config: FederationConfig,
+  config: AimuxConfig,
   request: ChatRequest,
   fetcher: FetchLike = fetch,
 ): Promise<Response> => {
@@ -242,8 +242,8 @@ export const proxyChatCompletion = async (
   });
 };
 
-export const listFederatedModels = async (
-  config: FederationConfig,
+export const listMuxedModels = async (
+  config: AimuxConfig,
   fetcher: FetchLike = fetch,
 ): Promise<{ object: "list"; data: Array<{ id: string; object: "model"; owned_by: string }> }> => {
   const mappedModels = listLlmProviders(config)
@@ -305,12 +305,12 @@ export const listFederatedModels = async (
 };
 
 export const createLlmHttpHandler =
-  (config: FederationConfig, fetcher: FetchLike = fetch) =>
+  (config: AimuxConfig, fetcher: FetchLike = fetch) =>
   async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/v1/models") {
-      return Response.json(await listFederatedModels(config, fetcher));
+      return Response.json(await listMuxedModels(config, fetcher));
     }
 
     if (request.method === "POST" && url.pathname === "/v1/chat/completions") {

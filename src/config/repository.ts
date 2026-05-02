@@ -8,10 +8,10 @@ import {
   type ConfigLocation,
   type ConfigRepositoryPort,
   type ConfigValidatorPort,
-  type FederationConfig,
+  type AimuxConfig,
 } from "./types.js";
 
-const explorer = cosmiconfig("mcp-federation", {
+const explorer = cosmiconfig("aimux", {
   searchPlaces: [...CONFIG_FILE_NAMES],
 });
 
@@ -29,12 +29,12 @@ const candidatePaths = (startDir: string): string[] => {
   return walk(resolve(startDir));
 };
 
-const normalizeConfig = (value: unknown): FederationConfig => {
+const normalizeConfig = (value: unknown): AimuxConfig => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return {};
   }
 
-  return value as FederationConfig;
+  return value as AimuxConfig;
 };
 
 const stripUndefined = (value: unknown): unknown => {
@@ -91,8 +91,8 @@ export class YamlConfigRepository implements ConfigRepositoryPort {
     };
   }
 
-  async write(path: string, config: FederationConfig): Promise<void> {
-    const cleanConfig = stripUndefined(config) as FederationConfig;
+  async write(path: string, config: AimuxConfig): Promise<void> {
+    const cleanConfig = stripUndefined(config) as AimuxConfig;
 
     if (this.validator) {
       await this.validator.assertValid(cleanConfig);

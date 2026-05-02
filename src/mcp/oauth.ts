@@ -127,7 +127,7 @@ export class ConfigOAuthClientProvider implements OAuthClientProvider {
 }
 
 export const createOAuthMetadata = (serverName: string, redirectUrl: string): OAuthClientMetadata => ({
-  client_name: `ai-fed ${serverName}`,
+  client_name: `aimux ${serverName}`,
   redirect_uris: [redirectUrl],
   grant_types: ["authorization_code", "refresh_token"],
   response_types: ["code"],

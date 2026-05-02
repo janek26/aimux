@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 import { cancel, intro, isCancel, multiselect, outro, password, select, text } from "@clack/prompts";
 import { mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { applyEdits, format as formatJsonc, modify as modifyJsonc, parse as parseJsonc, type ParseError } from "jsonc-parser";
 import { createDefaultConfig, addLlmProvider, addMcpServer, listLlmProviders, listMcpServers, removeLlmProvider, removeMcpServer } from "./core/config.js";
 import { HyperjumpConfigValidator } from "./config/validation.js";
 import { YamlConfigRepository } from "./config/repository.js";
@@ -9,7 +11,7 @@ import {
   LLM_PRESETS,
   LLM_SCHEMAS,
   MCP_TRANSPORTS,
-  type FederationConfig,
+  type AimuxConfig,
   type LlmProvider,
   type McpOAuthConfig,
   type RemoteMcpServerConfig,
@@ -35,24 +37,24 @@ type CliContext = {
   stderr: (message: string) => void;
 };
 
-const help = `ai-fed
+const help = `aimux
 
 Commands:
-  ai-fed init [--path <path>] [--global] [--force]
-  ai-fed setup
-  ai-fed config path
-  ai-fed config validate
-  ai-fed generate [opencode|cursor|zed|claude-code|codex|gemini-cli|all] [--port <port>]
-  ai-fed llm add fallback --name <provider> (--preset <preset> | --schema <schema> --url <url>)
-  ai-fed llm add <custom-model> --name <provider> --model <upstream-model>
-  ai-fed llm remove <name>
-  ai-fed llm list
-  ai-fed mcp add [name] [url] --transport <stdio|http|sse> [--command <command>]
-  ai-fed mcp remove <name>
-  ai-fed mcp list
-  ai-fed serve [--port <port>] [--frozen]
-  ai-fed serve llm [--port <port>]
-  ai-fed serve mcp [--frozen]
+  aimux init [--path <path>] [--global] [--force]
+  aimux setup
+  aimux config path
+  aimux config validate
+  aimux generate [opencode|cursor|zed|claude-code|codex|gemini-cli|all] [--port <port>]
+  aimux llm add fallback --name <provider> (--preset <preset> | --schema <schema> --url <url>)
+  aimux llm add <custom-model> --name <provider> --model <upstream-model>
+  aimux llm remove <name>
+  aimux llm list
+  aimux mcp add [name] [url] --transport <stdio|http|sse> [--command <command>]
+  aimux mcp remove <name>
+  aimux mcp list
+  aimux serve [--port <port>] [--frozen]
+  aimux serve llm [--port <port>]
+  aimux serve mcp [--frozen]
 `;
 
 const parseCsv = (value?: string | boolean): string[] | undefined =>
@@ -232,7 +234,7 @@ const currentCliCommand = (): string => {
     const executable = process.argv[0];
     const executableName = executable?.split(/[\\/]/).at(-1);
 
-    return executable && !executable.startsWith("/$bunfs/") && executableName !== "bun" ? executable : "ai-fed";
+    return executable && !executable.startsWith("/$bunfs/") && executableName !== "bun" ? executable : "aimux";
   }
 
   return invokedCommand;
@@ -242,7 +244,7 @@ const formatCombinedServeDetails = (port: number): string => {
   const origin = serverOrigin(port);
 
   return [
-    `AI Federation serving on ${origin}`,
+    `AIMux serving on ${origin}`,
     `LLM base URL: ${origin}/v1`,
     `LLM models URL: ${origin}/v1/models`,
     `LLM chat completions URL: ${origin}/v1/chat/completions`,
@@ -290,7 +292,7 @@ type ToolGenerator = {
   outputPath: string;
   write(params: {
     outputPath: string;
-    config: FederationConfig;
+    config: AimuxConfig;
     port: number;
   }): Promise<ToolGenerationOutcome>;
 };
@@ -324,7 +326,69 @@ const writeMergedJsonObject = async (path: string, value: Record<string, unknown
   await writeJsonObject(path, mergeJsonObjects(current, value));
 };
 
-const configuredClientModels = (config: FederationConfig): string[] => {
+const readJsoncObjectFromContent = (path: string, content: string): Record<string, unknown> => {
+  const errors: ParseError[] = [];
+  const parsed = parseJsonc(content, errors, { allowTrailingComma: true });
+
+  if (errors.length > 0 || !isJsonObject(parsed)) {
+    throw new Error(`${path} must contain a JSON object`);
+  }
+
+  return parsed;
+};
+
+const jsoncFormattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" };
+
+export const mergeJsoncValueContent = (
+  path: string,
+  content: string,
+  jsonPath: Array<string | number>,
+  value: unknown,
+): string => {
+  readJsoncObjectFromContent(path, content);
+  const edited = applyEdits(
+    content,
+    modifyJsonc(content, jsonPath, value, { formattingOptions: jsoncFormattingOptions }),
+  );
+  const formatted = applyEdits(edited, formatJsonc(edited, undefined, jsoncFormattingOptions));
+
+  return formatted.endsWith("\n") ? formatted : `${formatted}\n`;
+};
+
+export const mergeJsoncObjectContent = (
+  path: string,
+  content: string,
+  value: Record<string, unknown>,
+): string => {
+  let current = content;
+  const currentObject = readJsoncObjectFromContent(path, current);
+
+  for (const [key, nextValue] of Object.entries(value)) {
+    const currentValue = currentObject[key];
+    const mergedValue = isJsonObject(currentValue) && isJsonObject(nextValue)
+      ? mergeJsonObjects(currentValue, nextValue)
+      : nextValue;
+
+    current = applyEdits(
+      current,
+      modifyJsonc(current, [key], mergedValue, { formattingOptions: jsoncFormattingOptions }),
+    );
+  }
+
+  const formatted = applyEdits(current, formatJsonc(current, undefined, jsoncFormattingOptions));
+
+  return formatted.endsWith("\n") ? formatted : `${formatted}\n`;
+};
+
+const writeMergedJsoncObject = async (path: string, value: Record<string, unknown>): Promise<void> => {
+  const file = Bun.file(path);
+  const current = await file.exists() ? await file.text() : "{\n}\n";
+
+  await mkdir(dirname(path), { recursive: true });
+  await Bun.write(path, mergeJsoncObjectContent(path, current, value));
+};
+
+const configuredClientModels = (config: AimuxConfig): string[] => {
   const mapped = Object.entries(config.llm ?? {}).flatMap(([target, route]) =>
     target !== "fallback" && route && !Array.isArray(route) ? [target] : [],
   );
@@ -369,20 +433,120 @@ const stdioMcpServerJson = (): Record<string, unknown> => ({
 const zedModelJson = (model: string): Record<string, unknown> => ({
   name: model,
   display_name: model,
-  max_tokens: 128000,
+  max_tokens: 200000,
+  max_output_tokens: 32000,
+  max_completion_tokens: 200000,
   capabilities: {
     tools: true,
+    images: false,
+    parallel_tool_calls: false,
+    prompt_cache_key: false,
+    chat_completions: true,
   },
 });
+
+const zedGlobalSettingsPath = (): string =>
+  Bun.env.AIMUX_ZED_SETTINGS_PATH ?? join(homedir(), ".config", "zed", "settings.json");
+
+const zedLanguageModelConfig = (models: string[], port: number): Record<string, unknown> => ({
+  api_url: llmBaseUrl(port),
+  available_models: models.map(zedModelJson),
+});
+
+const zedAgentModelConfig = (model: string): Record<string, unknown> => ({
+  provider: "AIMux",
+  model,
+  enable_thinking: false,
+});
+
+export const mergeZedGlobalSettingsContent = (
+  path: string,
+  content: string,
+  models: string[],
+  port: number,
+): string => {
+  const defaultModel = models[0];
+
+  if (!defaultModel) {
+    return content;
+  }
+
+  return [
+    (current: string) => mergeJsoncValueContent(
+      path,
+      current,
+      ["language_models", "openai_compatible", "AIMux"],
+      zedLanguageModelConfig(models, port),
+    ),
+    (current: string) => mergeJsoncValueContent(
+      path,
+      current,
+      ["agent", "default_model"],
+      zedAgentModelConfig(defaultModel),
+    ),
+    (current: string) => mergeJsoncValueContent(
+      path,
+      current,
+      ["agent", "inline_assistant_model"],
+      zedAgentModelConfig(defaultModel),
+    ),
+  ].reduce((current, merge) => merge(current), content);
+};
+
+const writeZedGlobalSettings = async (path: string, models: string[], port: number): Promise<void> => {
+  const file = Bun.file(path);
+  const current = await file.exists() ? await file.text() : "{\n}\n";
+
+  await mkdir(dirname(path), { recursive: true });
+  await Bun.write(path, mergeZedGlobalSettingsContent(path, current, models, port));
+};
+
+const maybeWriteZedGlobalLanguageModels = async (models: string[], port: number): Promise<ToolGenerationOutcome> => {
+  if (models.length === 0) {
+    return generationOutcome({ llm: false, mcp: true }, [missingModelsWarning("zed")]);
+  }
+
+  if (!isTty()) {
+    return generationOutcome(
+      { llm: false, mcp: true },
+      [
+        "zed: language_models is only supported in global Zed settings; wrote local MCP config only. " +
+          "Run interactively to approve updating global Zed settings.",
+      ],
+    );
+  }
+
+  const path = zedGlobalSettingsPath();
+  const approved = await requireSelection(
+    select({
+      message: `Zed only reads language_models from ${path}. Update global Zed settings and set AIMux as the agent model?`,
+      options: [
+        { label: "Yes, add AIMux globally and enable it for Zed Agent", value: "yes" },
+        { label: "No, write local MCP config only", value: "no" },
+      ],
+    }),
+  );
+
+  if (approved !== "yes") {
+    return generationOutcome(
+      { llm: false, mcp: true },
+      ["zed: skipped global language_models update; wrote local MCP config only."],
+    );
+  }
+
+  await writeZedGlobalSettings(path, models, port);
+
+  return generationOutcome({ llm: true, mcp: true });
+};
 
 const tomlString = (value: string): string => JSON.stringify(value);
 
 const managedTomlBlock = (body: string): string =>
-  `# <ai-fed-generated>\n${body.trim()}\n# </ai-fed-generated>\n`;
+  `# <aimux-generated>\n${body.trim()}\n# </aimux-generated>\n`;
 
 const mergeManagedTomlBlock = (current: string, body: string): string => {
   const nextBlock = managedTomlBlock(body);
-  const pattern = /# <ai-fed-generated>[\s\S]*?# <\/ai-fed-generated>\n?/;
+  const pattern = /# <aimux-generated>[\s\S]*?# <\/aimux-generated>\n?/;
 
   if (pattern.test(current)) {
     return current.replace(pattern, nextBlock);
@@ -418,9 +582,9 @@ const toolGenerators: Record<GeneratedToolName, ToolGenerator> = {
       const models = configuredClientModels(config);
       const provider = models.length > 0
         ? {
-            "ai-fed": {
+            "aimux": {
               npm: "@ai-sdk/openai-compatible",
-              name: "Local AI Federation",
+              name: "Local AIMux",
               options: {
                 baseURL: llmBaseUrl(port),
               },
@@ -431,10 +595,10 @@ const toolGenerators: Record<GeneratedToolName, ToolGenerator> = {
 
       await writeMergedJsonObject(outputPath, {
         $schema: "https://opencode.ai/config.json",
-        ...(models[0] ? { model: `ai-fed/${models[0]}` } : {}),
+        ...(models[0] ? { model: `aimux/${models[0]}` } : {}),
         provider,
         mcp: {
-          "ai-fed": {
+          "aimux": {
             type: "remote",
             url: mcpUrl(port),
             enabled: true,
@@ -454,7 +618,7 @@ const toolGenerators: Record<GeneratedToolName, ToolGenerator> = {
     write: async ({ outputPath, port }) => {
       await writeMergedJsonObject(outputPath, {
         mcpServers: {
-          "ai-fed": cursorMcpServerJson(port),
+          "aimux": cursorMcpServerJson(port),
         },
       });
 
@@ -469,30 +633,14 @@ const toolGenerators: Record<GeneratedToolName, ToolGenerator> = {
     outputPath: ".zed/settings.json",
     write: async ({ outputPath, config, port }) => {
       const models = configuredClientModels(config);
-      const languageModels = models.length > 0
-        ? {
-            language_models: {
-              openai_compatible: {
-                "AI Federation": {
-                  api_url: llmBaseUrl(port),
-                  available_models: models.map(zedModelJson),
-                },
-              },
-            },
-          }
-        : {};
 
-      await writeMergedJsonObject(outputPath, {
-        ...languageModels,
+      await writeMergedJsoncObject(outputPath, {
         context_servers: {
-          "ai-fed": stdioMcpServerJson(),
+          "aimux": stdioMcpServerJson(),
         },
       });
 
-      return generationOutcome(
-        { llm: models.length > 0, mcp: true },
-        models.length > 0 ? [] : [missingModelsWarning("zed")],
-      );
+      return maybeWriteZedGlobalLanguageModels(models, port);
     },
   },
   "claude-code": {
@@ -501,7 +649,7 @@ const toolGenerators: Record<GeneratedToolName, ToolGenerator> = {
     write: async ({ outputPath, port }) => {
       await writeMergedJsonObject(outputPath, {
         mcpServers: {
-          "ai-fed": mcpServerJson(port),
+          "aimux": mcpServerJson(port),
         },
       });
 
@@ -518,12 +666,12 @@ const toolGenerators: Record<GeneratedToolName, ToolGenerator> = {
       const models = configuredClientModels(config);
       const modelLine = models[0] ? `model = ${tomlString(models[0])}\n` : "";
       const providerBlock = models.length > 0
-        ? `${modelLine}model_provider = "ai-fed"\n\n[model_providers.ai-fed]\nname = "AI Federation"\nbase_url = ${tomlString(llmBaseUrl(port))}\nenv_key = "AI_FED_API_KEY"\n`
+        ? `${modelLine}model_provider = "aimux"\n\n[model_providers.aimux]\nname = "AIMux"\nbase_url = ${tomlString(llmBaseUrl(port))}\nenv_key = "AIMUX_API_KEY"\n`
         : "";
 
       await writeManagedToml(
         outputPath,
-        `${providerBlock}\n[mcp_servers.ai-fed]\nurl = ${tomlString(mcpUrl(port))}\n`,
+        `${providerBlock}\n[mcp_servers.aimux]\nurl = ${tomlString(mcpUrl(port))}\n`,
       );
 
       return generationOutcome(
@@ -538,7 +686,7 @@ const toolGenerators: Record<GeneratedToolName, ToolGenerator> = {
     write: async ({ outputPath, port }) => {
       await writeMergedJsonObject(outputPath, {
         mcpServers: {
-          "ai-fed": {
+          "aimux": {
             httpUrl: mcpUrl(port),
             timeout: 300000,
             trust: true,
@@ -596,7 +744,7 @@ const collectGenerateTools = async (args: ParsedArgs): Promise<GeneratedToolName
 
 const generateToolConfig = async (
   cwd: string,
-  config: FederationConfig,
+  config: AimuxConfig,
   toolName: GeneratedToolName,
   port: number,
 ): Promise<ToolGenerationResult> => {
@@ -688,7 +836,7 @@ const resolveInitPath = async (
 
   const location = await requireSelection(
     select({
-      message: "Where should ai-fed create .mcp-federation.yml?",
+      message: "Where should aimux create .aimux.yml?",
       options: [
         { label: "Current directory", value: "current" },
         { label: "Home directory", value: "home" },
@@ -705,7 +853,7 @@ const createValidator = () => new HyperjumpConfigValidator();
 const readConfigFrom = async (
   repository: YamlConfigRepository,
   cwd: string,
-): Promise<{ path: string; config: FederationConfig } | undefined> => {
+): Promise<{ path: string; config: AimuxConfig } | undefined> => {
   const path = await repository.findConfigPath(cwd);
   return path ? repository.read(path) : undefined;
 };
@@ -713,7 +861,7 @@ const readConfigFrom = async (
 const ensureConfigLocation = async (
   repository: YamlConfigRepository,
   cwd: string,
-): Promise<{ path: string; config: FederationConfig }> => {
+): Promise<{ path: string; config: AimuxConfig }> => {
   const existing = await readConfigFrom(repository, cwd);
 
   if (existing) {
@@ -729,7 +877,7 @@ const ensureConfigLocation = async (
 
   const location = await requireSelection(
     select({
-      message: "No .mcp-federation.yml found. Where should it be created?",
+      message: "No .aimux.yml found. Where should it be created?",
       options: [
         { label: "Current directory", value: "current" },
         { label: "Home directory", value: "home" },
@@ -755,7 +903,7 @@ const assertEnum = <T extends string>(value: string | undefined, values: readonl
   throw new Error(`${label} must be one of: ${values.join(", ")}`);
 };
 
-const collectLlmProvider = async (args: ParsedArgs, config: FederationConfig): Promise<{
+const collectLlmProvider = async (args: ParsedArgs, config: AimuxConfig): Promise<{
   target: string;
   providerName: string;
   provider: LlmProvider | undefined;
@@ -993,7 +1141,7 @@ const validateMcpWithManualAuth = async (
 ): Promise<RemoteMcpServerConfig> => {
   const method = await requireSelection(
     select({
-      message: "How should ai-fed authenticate to this MCP server?",
+      message: "How should aimux authenticate to this MCP server?",
       options: [
         { label: "Bearer token", value: "bearer" },
         { label: "Custom header", value: "header" },
@@ -1075,7 +1223,7 @@ const runMcpOAuthSetup = async (
       }
 
       await finishAuth?.(code);
-      return new Response("<h1>Authorization successful</h1><p>You can close this window and return to ai-fed.</p>", {
+      return new Response("<h1>Authorization successful</h1><p>You can close this window and return to aimux.</p>", {
         headers: { "content-type": "text/html" },
       });
     }, console.error),
@@ -1100,7 +1248,7 @@ const runMcpOAuthSetup = async (
         authProvider: provider,
         requestInit: server.headers ? { headers: server.headers } : undefined,
       });
-  const client = new Client({ name: `ai-fed-${name}-auth`, version: "0.1.0" });
+  const client = new Client({ name: `aimux-${name}-auth`, version: "0.1.0" });
   let connectedWithoutOAuth = false;
 
   try {
@@ -1149,7 +1297,7 @@ const runMcpOAuthSetup = async (
   }
 };
 
-const validateConfigPreflight = async (config: FederationConfig): Promise<FederationConfig> => {
+const validateConfigPreflight = async (config: AimuxConfig): Promise<AimuxConfig> => {
   await createValidator().assertValid(config);
 
   for (const { target, providerName, provider, route } of listLlmProviders(config)) {
@@ -1179,7 +1327,7 @@ const validateConfigPreflight = async (config: FederationConfig): Promise<Federa
 };
 
 const validateMcpServersForServe = async (
-  config: FederationConfig,
+  config: AimuxConfig,
   onOAuthUpdate?: (serverName: string, server: McpServerConfig) => void | Promise<void>,
 ): Promise<void> => {
   await createValidator().assertValid(config);
@@ -1193,12 +1341,12 @@ const validateMcpServersForServe = async (
   }
 };
 
-const formatLlmList = (config: FederationConfig): string =>
+const formatLlmList = (config: AimuxConfig): string =>
   listLlmProviders(config)
     .map(({ target, providerName, provider }) => `${target}\t${providerName}\t${provider.preset ?? provider.schema}`)
     .join("\n");
 
-const formatMcpList = (config: FederationConfig): string =>
+const formatMcpList = (config: AimuxConfig): string =>
   listMcpServers(config)
     .map(({ name, server }) => `${name}\t${server.transport}\t${server.url ?? server.command}`)
     .join("\n");
@@ -1220,7 +1368,7 @@ export const runCli = async (argv: string[], context: CliContext = {
     }
 
     if (shouldUsePromptUi) {
-      intro("ai-fed");
+      intro("aimux");
     }
 
     if (domain === "init" || (domain === "config" && action === "init")) {
@@ -1249,7 +1397,7 @@ export const runCli = async (argv: string[], context: CliContext = {
         throw new Error("No config found");
       }
 
-      const validatedConfig = stripUndefined(await validateConfigPreflight(location.config)) as FederationConfig;
+      const validatedConfig = stripUndefined(await validateConfigPreflight(location.config)) as AimuxConfig;
       await repository.write(location.path, validatedConfig);
       context.stdout(`Valid config: ${location.path}`);
       return 0;
@@ -1282,7 +1430,7 @@ export const runCli = async (argv: string[], context: CliContext = {
       const { target, providerName, provider, routeOptions } = await collectLlmProvider(args, location.config);
       const nextConfig = stripUndefined(
         addLlmProvider(location.config, target, providerName, provider, routeOptions),
-      ) as FederationConfig;
+      ) as AimuxConfig;
       const route = target === "fallback"
         ? nextConfig.llm?.fallback?.at(-1)
         : nextConfig.llm?.[target];
@@ -1329,11 +1477,11 @@ export const runCli = async (argv: string[], context: CliContext = {
     if (domain === "mcp" && action === "add") {
       const location = await ensureConfigLocation(repository, context.cwd);
       const { name, server } = await collectMcpServer(args);
-      await createValidator().assertValid(stripUndefined(addMcpServer(location.config, name, server)) as FederationConfig);
+      await createValidator().assertValid(stripUndefined(addMcpServer(location.config, name, server)) as AimuxConfig);
       const validatedServer = await validateMcpAddConfig(name, server);
       const controlledServer = await collectMcpMethodControls(name, validatedServer, args);
       await validateMcpServerConfig(name, controlledServer);
-      const nextConfig = stripUndefined(addMcpServer(location.config, name, controlledServer)) as FederationConfig;
+      const nextConfig = stripUndefined(addMcpServer(location.config, name, controlledServer)) as AimuxConfig;
       await createValidator().assertValid(nextConfig);
       await repository.write(location.path, nextConfig);
       context.stdout(`Added MCP server ${name}`);
@@ -1377,7 +1525,7 @@ export const runCli = async (argv: string[], context: CliContext = {
       const frozen = Boolean(args.flags.frozen);
       const persistOAuthUpdate = async () => {
         if (!frozen) {
-          await repository.write(location.path, stripUndefined(location.config) as FederationConfig);
+          await repository.write(location.path, stripUndefined(location.config) as AimuxConfig);
         }
       };
       await validateMcpServersForServe(location.config, persistOAuthUpdate);
@@ -1432,7 +1580,7 @@ export const runCli = async (argv: string[], context: CliContext = {
       const frozen = Boolean(args.flags.frozen);
       const persistOAuthUpdate = async () => {
         if (!frozen) {
-          await repository.write(location.path, stripUndefined(location.config) as FederationConfig);
+          await repository.write(location.path, stripUndefined(location.config) as AimuxConfig);
         }
       };
       await validateMcpServersForServe(location.config, persistOAuthUpdate);

@@ -1,11 +1,11 @@
-# AI Federation
+# AIMux
 
 One config and one Bun CLI for managing LLM providers and MCP servers, then exposing them as local gateways that AI tools can share.
 
-AI Federation is useful when you want:
+AIMux is useful when you want:
 
 - One OpenAI-compatible `/v1` endpoint backed by multiple upstream providers.
-- One MCP server that federates tools, prompts, and resources from many MCP servers.
+- One MCP server that muxes tools, prompts, and resources from many MCP servers.
 - Generated local config for tools such as OpenCode, Cursor, Zed, Claude Code, Codex, and Gemini CLI.
 - A project-local or home-level config that can be validated before it is used.
 
@@ -16,7 +16,7 @@ bun install
 bun src/cli.ts init
 ```
 
-`init` creates an empty `.mcp-federation.yml`. In an interactive terminal it asks whether to create the file in the current project or in your home directory. The CLI searches from the current directory upward and uses the closest config file, then falls back to `~/.mcp-federation.yml`.
+`init` creates an empty `.aimux.yml`. In an interactive terminal it asks whether to create the file in the current project or in your home directory. The CLI searches from the current directory upward and uses the closest config file, then falls back to `~/.aimux.yml`.
 
 Add an OpenAI-compatible provider to the fallback route:
 
@@ -48,7 +48,7 @@ curl http://localhost:8787/v1/chat/completions \
   }'
 ```
 
-For OpenAI-compatible providers, AI Federation forwards chat-completion request and response bodies without rewriting them except for configured model remapping. That means provider-supported streaming, tool calls, structured outputs, image inputs, and other OpenAI-compatible fields pass through to the upstream provider.
+For OpenAI-compatible providers, AIMux forwards chat-completion request and response bodies without rewriting them except for configured model remapping. That means provider-supported streaming, tool calls, structured outputs, image inputs, and other OpenAI-compatible fields pass through to the upstream provider.
 
 Anthropic providers are adapted through the Messages API for basic chat-completion compatibility. Non-streaming text responses are normalized back to OpenAI-compatible responses, and streaming responses are proxied as returned by Anthropic. Full Anthropic multimodal and tool-use normalization is not claimed yet.
 
@@ -92,9 +92,11 @@ Generate local client config for supported tools:
 bun src/cli.ts generate all
 ```
 
-Targets include `opencode`, `cursor`, `zed`, `claude-code`, `codex`, and `gemini-cli`. Some tools cannot configure an LLM endpoint from project-local config; AI Federation logs that limitation and still writes MCP config when supported.
+Targets include `opencode`, `cursor`, `zed`, `claude-code`, `codex`, and `gemini-cli`. Some tools cannot configure an LLM endpoint from project-local config; AIMux logs that limitation and still writes MCP config when supported.
 
 Generated client config is intentionally ignored by git because it is local machine state.
+
+Zed currently reads `language_models` only from the global settings file at `~/.config/zed/settings.json`. AIMux writes project-local Zed MCP config to `.zed/settings.json`; when run interactively and concrete LLM models are configured, it asks before adding the AIMux language model provider to global Zed settings and setting it as the Zed Agent model.
 
 ## Common Commands
 
@@ -109,13 +111,13 @@ bun src/cli.ts mcp list
 bun src/cli.ts mcp remove <server-name>
 ```
 
-`setup` and `config validate` run schema validation plus live LLM/MCP preflight checks. OAuth refreshes update `.mcp-federation.yml`; pass `--frozen` to `serve` or `serve mcp` to keep the config file unchanged.
+`setup` and `config validate` run schema validation plus live LLM/MCP preflight checks. OAuth refreshes update `.aimux.yml`; pass `--frozen` to `serve` or `serve mcp` to keep the config file unchanged.
 
 ## Configuration
 
-AI Federation stores settings in `.mcp-federation.yml` or `.mcp-federation.yaml`.
+AIMux stores settings in `.aimux.yml` or `.aimux.yaml`.
 
-Do not commit real config files. They can contain API keys, MCP headers, OAuth access tokens, and refresh tokens. Use `.mcp-federation.example.yml` as a safe starting point.
+Do not commit real config files. They can contain API keys, MCP headers, OAuth access tokens, and refresh tokens. Use `.aimux.example.yml` as a safe starting point.
 
 ```yaml
 providers:
@@ -148,7 +150,7 @@ The CLI is intentionally small and split by responsibility:
 - `src/config` owns config types, schema validation, and YAML repository behavior.
 - `src/core` contains pure config transforms such as add/remove/list operations.
 - `src/llm` resolves provider presets and proxies OpenAI-compatible chat/model requests.
-- `src/mcp` creates MCP clients, applies method controls, handles OAuth persistence, and exposes the federated server.
+- `src/mcp` creates MCP clients, applies method controls, handles OAuth persistence, and exposes the muxed server.
 
 See `docs/PROJECT.md` for the project architecture and implementation notes.
 
@@ -165,7 +167,7 @@ Build a local binary:
 
 ```sh
 bun run build
-./ai-fed help
+./aimux help
 ```
 
 The e2e tests run the real CLI in isolated temp directories with fake LLM and MCP servers.
