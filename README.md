@@ -4,17 +4,25 @@
 [![CI](https://github.com/janek26/aimux/actions/workflows/ci.yml/badge.svg)](https://github.com/janek26/aimux/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-black.svg)](LICENSE)
 
-> "With xAI, OpenAI, Anthropic's models updating regularly, do I have to keep changing the 'model'=>'gpt-4-1-fast-non-reasoning' name for example in my code on ALL my sites for the next 100 years?
->
-> Or can I just say 'model'=> use best or something?
->
-> And no I don't wanna use OpenRouter, I just wanna use whatever is the best but affordable model
->
-> There's so many places in my code on so many of my sites where I have to change this and they do deprecate models regularly so it's like breaking changes" — [@levelsio](https://x.com/levelsio/status/2050244383845318786)
+<p align="center">
+  <a href="https://x.com/levelsio/status/2050244383845318786">
+    <img src="docs/x.png" alt="@levelsio tweet about model churn" width="760">
+  </a>
+</p>
+
+<p align="center">
+  <sub>Source: <a href="https://x.com/levelsio/status/2050244383845318786">@levelsio on X</a></sub>
+</p>
 
 AI tools all want their own provider config, model names, MCP servers, and local files. AIMux keeps that moving target in one config and exposes it as one local gateway: OpenAI-compatible `/v1` for models, plus one muxed MCP endpoint for tools.
 
 Use the same local AI stack across Cursor, Zed, Claude Code, Codex, Gemini CLI, OpenCode, and anything else that speaks OpenAI or MCP.
+
+## Demo
+
+<p align="center">
+  <img src="docs/demo.gif" alt="AIMux demo" width="480">
+</p>
 
 ## Features
 
