@@ -843,6 +843,12 @@ const resolveInitPath = async (
     return args.flags.global ? repository.getDefaultHomePath() : repository.getDefaultProjectPath(cwd);
   }
 
+  const matchingScopePath = defaultConfigPathWhenScopesMatch(repository, cwd);
+
+  if (matchingScopePath) {
+    return matchingScopePath;
+  }
+
   const location = await requireSelection(
     select({
       message: "Where should aimux create .aimux.yml?",
@@ -858,6 +864,16 @@ const resolveInitPath = async (
 
 const createRepository = () => new YamlConfigRepository(new HyperjumpConfigValidator());
 const createValidator = () => new HyperjumpConfigValidator();
+
+export const defaultConfigPathWhenScopesMatch = (
+  repository: Pick<YamlConfigRepository, "getDefaultHomePath" | "getDefaultProjectPath">,
+  cwd: string,
+): string | undefined => {
+  const currentPath = repository.getDefaultProjectPath(cwd);
+  const homePath = repository.getDefaultHomePath();
+
+  return currentPath === homePath ? homePath : undefined;
+};
 
 const readConfigFrom = async (
   repository: YamlConfigRepository,
@@ -880,6 +896,15 @@ const ensureConfigLocation = async (
   if (!isTty()) {
     return {
       path: repository.getDefaultProjectPath(cwd),
+      config: createDefaultConfig(),
+    };
+  }
+
+  const matchingScopePath = defaultConfigPathWhenScopesMatch(repository, cwd);
+
+  if (matchingScopePath) {
+    return {
+      path: matchingScopePath,
       config: createDefaultConfig(),
     };
   }

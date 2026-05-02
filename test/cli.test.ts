@@ -3,7 +3,7 @@ import { parse as parseJsonc } from "jsonc-parser";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { mergeJsoncObjectContent, mergeZedGlobalSettingsContent, parseArgs, runCli } from "../src/cli.js";
+import { defaultConfigPathWhenScopesMatch, mergeJsoncObjectContent, mergeZedGlobalSettingsContent, parseArgs, runCli } from "../src/cli.js";
 import { YamlConfigRepository } from "../src/config/repository.js";
 import { createServiceDefinition, resolveServiceCliInvocation, serviceConfigPath } from "../src/service.js";
 
@@ -135,6 +135,13 @@ describe("CLI", () => {
     expect(await runCli(["init"], context)).toBe(0);
     expect(await runCli(["llm", "add", "custom/prod", "--name", "prod", "--preset", "openai"], context)).toBe(1);
     expect(errors).toContain("Custom LLM targets require --model <upstream-model>");
+  });
+
+  test("skips config scope choice when current directory is home", async () => {
+    const home = await createTempDir();
+    const repository = new YamlConfigRepository(undefined, home);
+
+    expect(defaultConfigPathWhenScopesMatch(repository, home)).toBe(join(home, ".aimux.yml"));
   });
 
   test("does not edit config when LLM preflight rejects a model", async () => {
